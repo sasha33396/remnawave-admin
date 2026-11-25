@@ -34,7 +34,10 @@ router = APIRouter()
 # runtime via the plugin loader — see ``get_resources_map()`` below.
 AVAILABLE_RESOURCES = {
     "users": ["view", "create", "edit", "delete", "bulk_operations"],
-    "nodes": ["view", "create", "edit", "delete"],
+    "nodes": [
+        "view", "create", "edit", "delete", "restart", "enable", "disable",
+        "secrets_view", "secrets_edit",
+    ],
     "hosts": ["view", "create", "edit", "delete"],
     "violations": ["view", "resolve"],
     "settings": ["view", "edit"],
@@ -46,7 +49,16 @@ AVAILABLE_RESOURCES = {
     "logs": ["view", "edit"],
     "automation": ["view", "create", "edit", "delete", "run"],
     "notifications": ["view", "create", "edit", "delete"],
+    # ``resources`` is retained for backward compatibility with unrelated
+    # resource pages.  Security-sensitive resource families are independent.
     "resources": ["view", "create", "edit", "delete"],
+    "config_profiles": [
+        "view", "create", "edit", "delete", "secrets_view", "secrets_edit",
+        "full_edit",
+    ],
+    "subscription_templates": ["view", "create", "edit", "delete"],
+    "snippets": ["view", "create", "edit", "delete"],
+    "node_agents": ["view", "manage", "tokens_manage", "install"],
     "finance": ["view", "create", "edit", "delete"],
     "reports": ["view", "create"],
     "mailserver": ["view", "create", "edit", "delete"],

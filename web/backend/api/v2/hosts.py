@@ -160,6 +160,9 @@ async def create_host(
     api_client=Depends(get_api_client),
 ):
     """Создать новый хост."""
+    # A UUID/tag whitelist cannot safely auto-include a new resource.
+    if await get_scope(admin, "host", "view") is not None:
+        raise api_error(403, E.FORBIDDEN, "Creation is disabled by the attached host access policy")
     # Формируем payload в формате Remnawave API
     payload = {
         'remark': data.remark,

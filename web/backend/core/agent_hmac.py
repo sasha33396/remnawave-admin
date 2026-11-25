@@ -1,7 +1,7 @@
 """HMAC-SHA256 signing and verification for agent commands.
 
 Every command sent from backend to agent is signed with HMAC-SHA256.
-Key material: WEB_SECRET_KEY + agent_token.
+Key material: a per-agent secret derived from NODE_AGENT_HMAC_SECRET.
 Payload includes a timestamp for replay protection (60s window).
 """
 import hashlib
@@ -13,11 +13,37 @@ from typing import Any, Dict
 from web.backend.core.config import get_web_settings
 
 
-def _derive_key(agent_token: str) -> bytes:
-    """Derive HMAC key from secret + agent token."""
+def get_agent_install_secret(agent_token: str) -> str:
+    """Derive a secret scoped to one agent without exposing the server root.
+
+    The returned value may be placed in an install command: compromising it
+    does not reveal the JWT signing key or another node's HMAC key.
+    """
     settings = get_web_settings()
+    root = settings.node_agent_hmac_secret
+    if not root:
+        raise RuntimeError(
+            "NODE_AGENT_HMAC_SECRET must be configured before generating new agent install commands"
+        )
+    if not agent_token.startswith("v2."):
+        raise RuntimeError("Rotate the legacy agent token before generating an install command")
+    return hmac.new(root.encode(), agent_token.encode(), hashlib.sha256).hexdigest()
+
+
+def _derive_key(agent_token: str) -> bytes:
+    """Derive the same final key that the installed agent calculates.
+
+    An unset dedicated root deliberately retains the pre-3.1.1 key derivation
+    for already installed agents.  New install commands are disabled in that
+    mode so WEB_SECRET_KEY is never disclosed to another machine.
+    """
+    settings = get_web_settings()
+    if settings.node_agent_hmac_secret and agent_token.startswith("v2."):
+        install_secret = get_agent_install_secret(agent_token)
+    else:
+        install_secret = settings.secret_key
     return hashlib.sha256(
-        f"{settings.secret_key}:{agent_token}".encode()
+        f"{install_secret}:{agent_token}".encode()
     ).digest()
 
 

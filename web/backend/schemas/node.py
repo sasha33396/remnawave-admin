@@ -1,7 +1,7 @@
 """Node schemas for web panel API."""
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NodeBase(BaseModel):
@@ -48,6 +48,8 @@ class NodeListItem(NodeBase):
     note: Optional[str] = None
     proxy_url: Optional[str] = None
     node_consumption_multiplier: Optional[float] = None
+    config_profile_uuid: Optional[str] = None
+    active_inbounds: List[str] = Field(default_factory=list)
     # Access-policy scope for the current admin:
     # None = no restriction, list = allowed actions (e.g. ["view","edit"])
     allowed_actions: Optional[List[str]] = None
@@ -83,6 +85,8 @@ class NodeUpdate(BaseModel):
     note: Optional[str] = None
     proxy_url: Optional[str] = None
     node_consumption_multiplier: Optional[float] = None
+    config_profile_uuid: Optional[str] = None
+    active_inbounds: Optional[List[str]] = None
 
 
 class NodeStats(BaseModel):

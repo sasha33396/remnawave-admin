@@ -4,6 +4,7 @@
 Токен агента — секретный ключ для аутентификации агента перед Collector API.
 Каждая нода имеет свой уникальный токен, который генерируется в Admin Bot.
 """
+import os
 import secrets
 from typing import Optional
 
@@ -13,13 +14,19 @@ from shared.db_schema import NODES_TABLE
 from shared.db_query import select_sql, update_sql
 
 
-def generate_agent_token() -> str:
+def generate_agent_token(hmac_v2: Optional[bool] = None) -> str:
     """
     Генерирует новый токен агента (32 байта в hex = 64 символа).
     
     Пример: 'a1b2c3d4e5f6...' (64 символа)
     """
-    return secrets.token_urlsafe(32)
+    token = secrets.token_urlsafe(32)
+    # The prefix is a non-secret format marker. It lets the backend keep
+    # signing commands for legacy agents while nodes are reinstalled one by
+    # one with the dedicated HMAC root.
+    if hmac_v2 is None:
+        hmac_v2 = bool(os.getenv("NODE_AGENT_HMAC_SECRET"))
+    return f"v2.{token}" if hmac_v2 else token
 
 
 async def get_node_by_token(db: DatabaseService, token: str) -> Optional[str]:
@@ -51,7 +58,9 @@ async def get_node_by_token(db: DatabaseService, token: str) -> Optional[str]:
 async def set_node_agent_token(
     db: DatabaseService,
     node_uuid: str,
-    token: Optional[str] = None
+    token: Optional[str] = None,
+    *,
+    hmac_v2: Optional[bool] = None,
 ) -> Optional[str]:
     """
     Устанавливает токен агента для ноды.
@@ -63,7 +72,7 @@ async def set_node_agent_token(
         return None
     
     if token is None:
-        token = generate_agent_token()
+        token = generate_agent_token(hmac_v2=hmac_v2)
     
     try:
         async with db.acquire() as conn:

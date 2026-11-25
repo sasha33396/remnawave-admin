@@ -35,7 +35,11 @@ _EXTRACT_FIELDS: dict[str, set[str]] = {
 }
 
 # Sensitive fields that must never be logged
-_SENSITIVE_FIELDS = {"password", "password_hash", "token", "secret", "api_key", "subscription_url"}
+_SENSITIVE_FIELDS = {
+    "password", "password_hash", "token", "secret", "secret_key", "secretKey",
+    "private_key", "privateKey", "preSharedKey", "presharedKey", "api_key",
+    "subscription_url", "WEB_SECRET_KEY", "NODE_AGENT_HMAC_SECRET",
+}
 
 # ── URL → resource/action mapping ─────────────────────────────────
 # Maps URL patterns to (resource, action) tuples.

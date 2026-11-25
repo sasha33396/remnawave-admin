@@ -22,11 +22,20 @@ router = APIRouter(dependencies=[Depends(verify_internal_api_secret)])
 
 _QUOTA_RESOURCES = {"users", "nodes", "hosts"}
 _KNOWN_RBAC_RESOURCES = set(AVAILABLE_RESOURCES.keys())
+_RESOURCE_ALIASES = {
+    "config-profiles": "config_profiles",
+    "subscription-templates": "subscription_templates",
+    "node-agents": "node_agents",
+}
 
 
 def _method_to_action(method: str, path: str) -> str:
     """Map HTTP method + path to RBAC action."""
     method = method.upper()
+    lower_path = path.lower()
+    for action in ("restart", "enable", "disable"):
+        if f"/{action}" in lower_path:
+            return action
     if method == "GET":
         return "view"
     if method == "PATCH":
@@ -57,14 +66,14 @@ async def _check_permission(
 
     Returns False only if admin lacks the specific permission.
     """
-    if not resource or resource not in _KNOWN_RBAC_RESOURCES:
-        # Panel-only ресурс (вне RBAC-системы) проходит без проверки прав. Логируем для
-        # аудита: чувствительные Panel-операции желательно переводить на типизированные эндпоинты.
-        if resource:
-            logger.debug("Proxy: non-RBAC resource '%s' (%s) passed without RBAC check", resource, action)
-        return True
     if admin_account_id is None:
         return True
+    # A user-attributed request must never turn a new Panel API family into an
+    # implicit permission. Background/legacy calls remain authorized by the
+    # internal shared secret itself.
+    if not resource or resource not in _KNOWN_RBAC_RESOURCES:
+        logger.warning("Proxy denied unknown RBAC resource '%s' (%s)", resource, action)
+        return False
 
     from web.backend.core.rbac import get_admin_account_by_id
     from shared.rbac import has_permission
@@ -86,8 +95,34 @@ def _extract_resource(path: str) -> str:
     parts = path.strip("/").split("/")
     for p in parts:
         if p and p not in ("api",):
-            return p
+            return _RESOURCE_ALIASES.get(p, p.replace("-", "_"))
     return ""
+
+
+def _extract_resource_id(path: str) -> str | None:
+    """Return the object UUID immediately following the resource segment."""
+    relevant = [p for p in path.strip("/").split("/") if p and p != "api"]
+    if len(relevant) < 2 or relevant[1] in {"actions", "bulk", "inbounds"}:
+        return None
+    return relevant[1]
+
+
+def _response_collection(payload: object, resource: str) -> list[dict] | None:
+    """Locate a Panel collection without assuming one response envelope."""
+    if not isinstance(payload, dict):
+        return None
+    body = payload.get("response", payload)
+    if not isinstance(body, dict):
+        return None
+    candidates = {
+        "nodes": ("nodes",),
+        "hosts": ("hosts",),
+        "config_profiles": ("configProfiles", "config_profiles"),
+    }.get(resource, ())
+    for key in candidates:
+        if isinstance(body.get(key), list):
+            return body[key]
+    return None
 
 
 def _is_resource_root(path: str) -> bool:
@@ -165,6 +200,41 @@ async def _proxy(request: Request, path: str):
             detail=f"Permission denied: {resource}:{action}",
         )
 
+    admin_info = None
+    is_superadmin = admin_account_id is None
+    role_id = None
+    scope = None
+    scope_resource = {
+        "nodes": "node",
+        "hosts": "host",
+        "config_profiles": "config_profile",
+    }.get(resource)
+    if admin_account_id is not None:
+        from web.backend.core.rbac import get_admin_account_by_id
+        admin_info = await get_admin_account_by_id(admin_account_id)
+        is_superadmin = bool(admin_info and admin_info.get("role_name") == "superadmin")
+        role_id = admin_info.get("role_id") if admin_info else None
+
+    # Profile mutations must use the typed endpoint: only it performs a fresh
+    # trusted fetch, protected-field merge, concurrency check, and safe policy.
+    if resource == "config_profiles" and request.method != "GET" and not is_superadmin:
+        raise HTTPException(403, "Use the protected config-profiles API for profile changes")
+
+    if scope_resource and not is_superadmin:
+        from shared.rbac import get_scope
+        scope = await get_scope(
+            admin_account_id,
+            role_id,
+            admin_info.get("role_name") if admin_info else None,
+            scope_resource,
+            action,
+        )
+        resource_id = _extract_resource_id(path)
+        if resource_id and scope is not None and resource_id.lower() not in scope:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        if request.method == "POST" and _is_resource_root(path) and scope is not None:
+            raise HTTPException(403, "Creation is disabled by the attached access policy")
+
     # Quota check before create operations on quota-tracked resources
     if request.method == "POST" and _is_resource_root(path) and resource in _QUOTA_RESOURCES and admin_account_id is not None:
         from web.backend.core.rbac import check_quota
@@ -186,6 +256,27 @@ async def _proxy(request: Request, path: str):
         raise HTTPException(status_code=504, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=502, detail=str(e)[:500])
+
+    if scope_resource and request.method == "GET":
+        collection = _response_collection(response, resource)
+        if collection is not None and scope is not None:
+            collection[:] = [
+                item for item in collection
+                if item.get("uuid") and str(item["uuid"]).lower() in scope
+            ]
+            body_response = response.get("response", response) if isinstance(response, dict) else None
+            if isinstance(body_response, dict) and "total" in body_response:
+                body_response["total"] = len(collection)
+
+    if request.method == "GET" and not is_superadmin:
+        from shared.rbac import has_permission
+        from web.backend.core.resource_security import redact_node_secrets, redact_profile_payload
+        if resource == "nodes" and not await has_permission(role_id, "nodes", "secrets_view"):
+            response = redact_node_secrets(response)
+        elif resource == "config_profiles" and not await has_permission(
+            role_id, "config_profiles", "secrets_view"
+        ):
+            response = redact_profile_payload(response)
 
     # Apply creator scope filtering for user list responses (GET /users)
     if request.method == "GET" and resource == "users" and admin_account_id is not None:

@@ -3,10 +3,43 @@ import re
 from typing import Optional, List, Tuple
 
 import logging
+import json
 logger = logging.getLogger(__name__)
 
 from shared.db_schema import AUDIT_TABLE
 from shared.db_query import select_sql, insert_sql
+
+
+_AUDIT_SECRET_WORDS = {
+    "password", "passwordhash", "token", "secret", "secretkey", "privatekey",
+    "apikey", "subscriptionurl", "presharedkey", "websecretkey",
+}
+
+
+def _redact_audit_value(value):
+    if isinstance(value, dict):
+        result = {}
+        for key, child in value.items():
+            normal = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            result[key] = "[REDACTED]" if normal in _AUDIT_SECRET_WORDS else _redact_audit_value(child)
+        return result
+    if isinstance(value, list):
+        return [_redact_audit_value(item) for item in value]
+    return value
+
+
+def sanitize_audit_details(details: Optional[str]) -> Optional[str]:
+    if not details:
+        return details
+    try:
+        return json.dumps(_redact_audit_value(json.loads(details)), ensure_ascii=False)
+    except (TypeError, ValueError):
+        # Redact common key=value / JSON-like forms without echoing the value.
+        return re.sub(
+            r"(?i)(password|token|secret(?:_?key)?|private_?key|api_?key)\s*[:=]\s*[^,;\s}]+",
+            r"\1=[REDACTED]",
+            details,
+        )
 
 
 async def write_audit_log(
@@ -18,6 +51,7 @@ async def write_audit_log(
     details: Optional[str] = None,
     ip_address: Optional[str] = None,
 ) -> None:
+    details = sanitize_audit_details(details)
     try:
         from shared.database import db_service
         if not db_service.is_connected:

@@ -406,18 +406,17 @@ async def resolve_allowed_actions_map(
     view_scope = await get_scope(admin, resource_type, "view")
     if view_scope is None:
         return {u.lower(): None for u in uuids}
-    edit_scope = await get_scope(admin, resource_type, "edit")
-    delete_scope = await get_scope(admin, resource_type, "delete")
+    scoped_actions = ("edit", "delete", "restart", "enable", "disable")
+    scopes = {action: await get_scope(admin, resource_type, action) for action in scoped_actions}
     result: Dict[str, Optional[List[str]]] = {}
     for u in uuids:
         key = u.lower()
         actions: List[str] = []
         if key in view_scope:
             actions.append("view")
-        if edit_scope is not None and key in edit_scope:
-            actions.append("edit")
-        if delete_scope is not None and key in delete_scope:
-            actions.append("delete")
+        for action, action_scope in scopes.items():
+            if action_scope is None or key in action_scope:
+                actions.append(action)
         result[key] = actions
     return result
 

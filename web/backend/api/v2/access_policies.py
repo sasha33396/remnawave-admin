@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-VALID_RESOURCE_TYPES = {"node", "host", "squad", "user"}
-VALID_SCOPE_TYPES = {"uuid", "tag"}
-VALID_ACTIONS = {"view", "edit", "delete"}
+VALID_RESOURCE_TYPES = {"node", "host", "squad", "user", "config_profile"}
+VALID_SCOPE_TYPES = {"uuid", "tag", "all"}
+VALID_ACTIONS = {"view", "edit", "delete", "restart", "enable", "disable"}
 
 
 class RuleIn(BaseModel):
-    resource_type: str = Field(..., description="node | host | squad | user")
-    scope_type: str = Field(..., description="uuid | tag")
+    resource_type: str = Field(..., description="node | host | squad | user | config_profile")
+    scope_type: str = Field(..., description="uuid | tag | all")
     scope_value: str = Field(..., min_length=1, max_length=200)
     actions: List[str] = Field(default_factory=lambda: ["view"])
 
@@ -82,6 +82,14 @@ def _validate_rules(rules: List[RuleIn]) -> None:
             raise api_error(400, E.VALIDATION, f"Unknown actions: {bad}")
         if not r.actions:
             raise api_error(400, E.VALIDATION, "Rule must have at least one action")
+        if r.resource_type != "node" and any(
+            action in {"restart", "enable", "disable"} for action in r.actions
+        ):
+            raise api_error(400, E.VALIDATION, "Node lifecycle actions apply only to nodes")
+        if r.scope_type == "tag" and r.resource_type not in {"node", "host"}:
+            raise api_error(400, E.VALIDATION, "Tag scope is supported only for nodes and hosts")
+        if r.scope_type == "all" and r.scope_value.lower() not in {"*", "all"}:
+            raise api_error(400, E.VALIDATION, "All scope_value must be '*' or 'all'")
 
 
 @router.get("", response_model=List[PolicyListItem])

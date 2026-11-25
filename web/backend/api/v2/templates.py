@@ -68,7 +68,7 @@ class ReorderRequest(BaseModel):
 
 @router.get("")
 async def list_templates(
-    admin: AdminUser = Depends(require_permission("resources", "view")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "view")),
 ):
     """List all subscription templates."""
     try:
@@ -89,7 +89,7 @@ async def list_templates(
 @router.get("/{template_uuid}")
 async def get_template(
     template_uuid: str,
-    admin: AdminUser = Depends(require_permission("resources", "view")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "view")),
 ):
     """Get a single template by UUID."""
     try:
@@ -104,7 +104,7 @@ async def get_template(
 @router.post("")
 async def create_template(
     data: TemplateCreate,
-    admin: AdminUser = Depends(require_permission("resources", "create")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "create")),
 ):
     """Create a new subscription template."""
     try:
@@ -119,7 +119,7 @@ async def create_template(
 @router.get("/{template_uuid}/versions")
 async def list_template_versions(
     template_uuid: str,
-    admin: AdminUser = Depends(require_permission("resources", "view")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "view")),
 ):
     """История сохранений шаблона через встроенный редактор."""
     from shared.database import db_service
@@ -129,7 +129,7 @@ async def list_template_versions(
 @router.get("/versions/{version_id}")
 async def get_template_version(
     version_id: int,
-    admin: AdminUser = Depends(require_permission("resources", "view")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "view")),
 ):
     """Содержимое конкретной версии шаблона (для отката/диффа)."""
     from shared.database import db_service
@@ -143,7 +143,7 @@ async def get_template_version(
 async def update_template(
     template_uuid: str,
     data: TemplateUpdate,
-    admin: AdminUser = Depends(require_permission("resources", "edit")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "edit")),
 ):
     """Update a subscription template."""
     from shared.exceptions import ServerError, ValidationError
@@ -188,7 +188,7 @@ async def update_template(
 @router.delete("/{template_uuid}")
 async def delete_template(
     template_uuid: str,
-    admin: AdminUser = Depends(require_permission("resources", "delete")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "delete")),
 ):
     """Delete a subscription template."""
     try:
@@ -203,7 +203,7 @@ async def delete_template(
 @router.post("/reorder")
 async def reorder_templates(
     data: ReorderRequest,
-    admin: AdminUser = Depends(require_permission("resources", "edit")),
+    admin: AdminUser = Depends(require_permission("subscription_templates", "edit")),
 ):
     """Reorder subscription templates."""
     try:

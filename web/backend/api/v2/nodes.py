@@ -18,6 +18,7 @@ from web.backend.api.deps import get_current_admin, AdminUser, require_permissio
 from web.backend.core.errors import api_error, E
 from web.backend.core.audit import write_audit_log
 from web.backend.core.rbac import get_scope, check_access, resolve_allowed_actions_map
+from web.backend.core.resource_security import redact_node_secrets
 from web.backend.core.api_helper import (
     fetch_nodes_from_api, fetch_nodes_realtime_usage,
     fetch_nodes_usage_by_range, _normalize,
@@ -30,13 +31,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _agent_hmac_v2_enabled() -> bool:
+    from web.backend.core.config import get_web_settings
+    return bool(get_web_settings().node_agent_hmac_secret)
+
+
 # ВАЖНО: роутер монтируется с префиксом /api/v2/nodes — путь здесь БЕЗ /nodes.
 # Статический роут обязан быть объявлен раньше динамического /{node_uuid}.
 @router.get("/agent-meta")
-async def agent_meta(admin: AdminUser = Depends(require_permission("nodes", "view"))):
+async def agent_meta(admin: AdminUser = Depends(require_permission("node_agents", "view"))):
     """Метаданные node-agent: эталонная версия для сравнения в UI."""
     from shared.agent_version import LATEST_AGENT_VERSION
     return {"latest_agent_version": LATEST_AGENT_VERSION}
+
+
+async def _deny_scoped_node_create(admin: AdminUser) -> None:
+    if await get_scope(admin, "node", "view") is not None:
+        raise api_error(403, E.FORBIDDEN, "Creation is disabled by the attached node access policy")
+
+
+async def _require_profile_assignment_access(admin: AdminUser, profile_uuid: str) -> None:
+    if admin.role == "superadmin" or admin.account_id is None:
+        return
+    if not admin.has_permission("config_profiles", "view"):
+        raise api_error(403, E.FORBIDDEN, "Config profile access is required")
+    if not await check_access(admin, "config_profile", profile_uuid, "view"):
+        raise api_error(404, E.NOT_FOUND)
+
+
+def _node_response(value: object, admin: AdminUser) -> object:
+    if admin.role == "superadmin" or admin.account_id is None or admin.has_permission("nodes", "secrets_view"):
+        return value
+    return redact_node_secrets(value)
 
 
 def _ensure_node_snake_case(node: dict) -> dict:
@@ -70,6 +96,22 @@ def _ensure_node_snake_case(node: dict) -> dict:
             result["xrayVersion"] = versions["xray"]
         if "nodeVersion" not in result and versions.get("node"):
             result["nodeVersion"] = versions["node"]
+    profile = result.get("configProfile") or result.get("config_profile")
+    if isinstance(profile, dict):
+        result.setdefault(
+            "config_profile_uuid",
+            profile.get("activeConfigProfileUuid") or profile.get("active_config_profile_uuid"),
+        )
+        active = profile.get("activeInbounds") or profile.get("active_inbounds") or []
+        result.setdefault(
+            "active_inbounds",
+            [
+                str(item.get("uuid") or item.get("configProfileInboundUuid"))
+                if isinstance(item, dict) else str(item)
+                for item in active
+                if (not isinstance(item, dict)) or item.get("uuid") or item.get("configProfileInboundUuid")
+            ],
+        )
     # Panel 2.7+: extract system.info/stats into flat metrics
     system = result.get("system")
     if isinstance(system, dict):
@@ -190,7 +232,7 @@ async def list_nodes(
         # Enrich with node-agent state (token presence + WS connectivity)
         try:
             from shared.database import db_service
-            if db_service.is_connected:
+            if db_service.is_connected and admin.has_permission("node_agents", "view"):
                 agent_state = await db_service.get_nodes_agent_state()
                 for n in nodes:
                     state = agent_state.get(str(n.get("uuid", "")).lower())
@@ -244,7 +286,7 @@ async def list_nodes(
         node_items = []
         for n in items:
             try:
-                node_items.append(NodeListItem(**n))
+                node_items.append(NodeListItem(**_node_response(n, admin)))
             except Exception as e:
                 logger.debug("Failed to parse node %s: %s", n.get('uuid', '?'), e)
 
@@ -299,7 +341,7 @@ async def get_node(
         if not node_data:
             raise api_error(404, E.NODE_NOT_FOUND)
 
-        node_dict = _ensure_node_snake_case(node_data)
+        node_dict = _ensure_node_snake_case(_node_response(node_data, admin))
         actions_map = await resolve_allowed_actions_map(admin, "node", [node_uuid])
         node_dict["allowed_actions"] = actions_map.get(node_uuid.lower())
         return NodeDetail(**node_dict)
@@ -318,6 +360,8 @@ async def create_node(
     _quota: None = Depends(require_quota("nodes")),
 ):
     """Create a new node."""
+    await _deny_scoped_node_create(admin)
+    await _require_profile_assignment_access(admin, data.config_profile_uuid)
     try:
         from shared.api_client import api_client
 
@@ -347,7 +391,7 @@ async def create_node(
             ip_address=get_client_ip(request),
         )
 
-        return NodeDetail(**_ensure_node_snake_case(node))
+        return NodeDetail(**_ensure_node_snake_case(_node_response(node, admin)))
 
     except ImportError:
         raise api_error(503, E.API_SERVICE_UNAVAILABLE)
@@ -369,6 +413,15 @@ async def update_node(
         from shared.api_client import api_client
 
         update_data = data.model_dump(exclude_unset=True)
+        profile_uuid = update_data.get("config_profile_uuid")
+        active_inbounds = update_data.get("active_inbounds")
+        if (profile_uuid is None) != (active_inbounds is None):
+            raise HTTPException(
+                status_code=422,
+                detail="config_profile_uuid and active_inbounds must be changed together",
+            )
+        if profile_uuid is not None:
+            await _require_profile_assignment_access(admin, str(profile_uuid))
         result = await api_client.update_node(node_uuid, **update_data)
 
         # Upstream API wraps data in 'response' key
@@ -384,8 +437,10 @@ async def update_node(
             ip_address=get_client_ip(request),
         )
 
-        return NodeDetail(**_ensure_node_snake_case(node))
+        return NodeDetail(**_ensure_node_snake_case(_node_response(node, admin)))
 
+    except HTTPException:
+        raise
     except ImportError:
         raise api_error(503, E.API_SERVICE_UNAVAILABLE)
     except Exception as e:
@@ -441,10 +496,10 @@ async def delete_node(
 async def restart_node(
     node_uuid: str,
     request: Request,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("nodes", "restart")),
 ):
     """Restart a node."""
-    if not await check_access(admin, "node", node_uuid, "edit"):
+    if not await check_access(admin, "node", node_uuid, "restart"):
         raise api_error(403, E.FORBIDDEN)
     try:
         from shared.api_client import api_client
@@ -473,10 +528,10 @@ async def restart_node(
 async def enable_node(
     node_uuid: str,
     request: Request,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("nodes", "enable")),
 ):
     """Enable a disabled node."""
-    if not await check_access(admin, "node", node_uuid, "edit"):
+    if not await check_access(admin, "node", node_uuid, "enable"):
         raise api_error(403, E.FORBIDDEN)
     try:
         from shared.api_client import api_client
@@ -504,23 +559,23 @@ async def enable_node(
 @router.get("/{node_uuid}/agent-token")
 async def get_agent_token_status(
     node_uuid: str,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "view")),
 ):
     """Get agent token status for a node (masked)."""
+    if not await check_access(admin, "node", node_uuid, "view"):
+        raise api_error(404, E.NODE_NOT_FOUND)
     try:
         from shared.database import db_service
         if db_service.is_connected:
             token = await db_service.get_node_agent_token(node_uuid)
             if token:
-                # Return masked token: first 8 + ... + last 4
-                masked = token[:8] + '...' + token[-4:] if len(token) > 12 else '***'
-                return {"has_token": True, "masked_token": masked}
+                return {"has_token": True, "masked_token": "********"}
             return {"has_token": False, "masked_token": None}
         raise api_error(503, E.DB_UNAVAILABLE)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error getting agent token status for %s: %s", node_uuid, e)
+        logger.error("Error getting agent token status for %s (%s)", node_uuid, type(e).__name__)
         raise api_error(500, E.INTERNAL_ERROR)
 
 
@@ -528,14 +583,18 @@ async def get_agent_token_status(
 async def generate_agent_token(
     node_uuid: str,
     request: Request,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "tokens_manage")),
 ):
     """Generate a new agent token for a node."""
+    if not await check_access(admin, "node", node_uuid, "edit"):
+        raise api_error(404, E.NODE_NOT_FOUND)
     try:
         from shared.database import db_service
         from shared.agent_tokens import set_node_agent_token
 
-        token = await set_node_agent_token(db_service, node_uuid)
+        token = await set_node_agent_token(
+            db_service, node_uuid, hmac_v2=_agent_hmac_v2_enabled(),
+        )
         if token:
             await write_audit_log(
                 admin_id=admin.account_id,
@@ -551,7 +610,7 @@ async def generate_agent_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error generating agent token for %s: %s", node_uuid, e)
+        logger.error("Error generating agent token for %s (%s)", node_uuid, type(e).__name__)
         raise api_error(500, E.INTERNAL_ERROR)
 
 
@@ -559,9 +618,11 @@ async def generate_agent_token(
 async def revoke_agent_token(
     node_uuid: str,
     request: Request,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "tokens_manage")),
 ):
     """Revoke agent token for a node."""
+    if not await check_access(admin, "node", node_uuid, "edit"):
+        raise api_error(404, E.NODE_NOT_FOUND)
     try:
         from shared.database import db_service
         from shared.agent_tokens import revoke_node_agent_token
@@ -582,7 +643,7 @@ async def revoke_agent_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error revoking agent token for %s: %s", node_uuid, e)
+        logger.error("Error revoking agent token for %s (%s)", node_uuid, type(e).__name__)
         raise api_error(500, E.INTERNAL_ERROR)
 
 
@@ -590,9 +651,11 @@ async def revoke_agent_token(
 async def get_agent_install_command(
     node_uuid: str,
     request: Request,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "install")),
 ):
     """Generate install command for node agent. Auto-generates token if needed."""
+    if not await check_access(admin, "node", node_uuid, "edit"):
+        raise api_error(404, E.NODE_NOT_FOUND)
     try:
         from shared.database import db_service
         from shared.agent_tokens import set_node_agent_token
@@ -600,7 +663,9 @@ async def get_agent_install_command(
         # Get existing token or generate new one
         token = await db_service.get_node_agent_token(node_uuid)
         if not token:
-            token = await set_node_agent_token(db_service, node_uuid)
+            token = await set_node_agent_token(
+                db_service, node_uuid, hmac_v2=_agent_hmac_v2_enabled(),
+            )
             if not token:
                 raise api_error(500, E.TOKEN_GENERATE_FAILED)
             await write_audit_log(
@@ -612,6 +677,21 @@ async def get_agent_install_command(
                 details=json.dumps({"node_uuid": node_uuid, "via": "agent-install"}),
                 ip_address=get_client_ip(request),
             )
+        elif not token.startswith("v2."):
+            from web.backend.core.config import get_web_settings
+            if get_web_settings().node_agent_hmac_secret:
+                token = await set_node_agent_token(db_service, node_uuid, hmac_v2=True)
+                if not token:
+                    raise api_error(500, E.TOKEN_GENERATE_FAILED)
+                await write_audit_log(
+                    admin_id=admin.account_id,
+                    admin_username=admin.username,
+                    action="node.rotate_agent_token_v2",
+                    resource="nodes",
+                    resource_id=node_uuid,
+                    details=json.dumps({"node_uuid": node_uuid, "via": "agent-install"}),
+                    ip_address=get_client_ip(request),
+                )
 
         # Build install command
         base_url = str(request.base_url).rstrip("/")
@@ -625,9 +705,12 @@ async def get_agent_install_command(
             base_url = f"{forwarded_proto}://{forwarded_host}"
 
         script_url = "https://raw.githubusercontent.com/Case211/remnawave-admin/main/node-agent/install.sh"
-        # Include WS secret key so agent can verify HMAC-signed commands
-        from web.backend.core.config import get_web_settings
-        ws_secret = get_web_settings().secret_key
+        # Expose only a per-agent derivative, never the JWT signing secret.
+        from web.backend.core.agent_hmac import get_agent_install_secret
+        try:
+            ws_secret = get_agent_install_secret(token)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         install_cmd = (
             f"curl -sSL {script_url} | "
             f"bash -s -- --uuid {node_uuid} --url {base_url} --token {token} "
@@ -643,7 +726,7 @@ async def get_agent_install_command(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error generating install command for %s: %s", node_uuid, e)
+        logger.error("Error generating install command for %s (%s)", node_uuid, type(e).__name__)
         raise api_error(500, E.INTERNAL_ERROR)
 
 
@@ -654,7 +737,7 @@ async def get_agent_install_command(
 async def bulk_generate_tokens(
     request: Request,
     body: Optional[dict] = None,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "tokens_manage")),
 ):
     """Generate agent tokens for multiple nodes.
 
@@ -670,15 +753,20 @@ async def bulk_generate_tokens(
 
     uuids = (body or {}).get("uuids", [])
 
-    # If no UUIDs provided, get all nodes without tokens
+    scope = await get_scope(admin, "node", "edit")
+    # If no UUIDs provided, get all accessible nodes without tokens
     if not uuids:
         async with db_service.acquire() as conn:
             rows = await conn.fetch(
                 select_sql(NODES_TABLE, "uuid::text, name", "WHERE agent_token IS NULL ORDER BY name")
             )
-            uuids = [r["uuid"] for r in rows]
+            uuids = [r["uuid"] for r in rows if scope is None or r["uuid"].lower() in scope]
             name_map = {r["uuid"]: r["name"] for r in rows}
+        if scope is not None and any(str(u).lower() not in scope for u in uuids):
+            raise api_error(403, E.FORBIDDEN)
     else:
+        if scope is not None and any(str(u).lower() not in scope for u in uuids):
+            raise api_error(403, E.FORBIDDEN)
         async with db_service.acquire() as conn:
             rows = await conn.fetch(
                 select_sql(NODES_TABLE, "uuid::text, name", "WHERE uuid = ANY($1::uuid[])"), uuids
@@ -692,7 +780,9 @@ async def bulk_generate_tokens(
     success, failed = 0, 0
     for node_uuid in uuids:
         try:
-            token = await set_node_agent_token(db_service, node_uuid)
+            token = await set_node_agent_token(
+                db_service, node_uuid, hmac_v2=_agent_hmac_v2_enabled(),
+            )
             if token:
                 results.append(BulkNodeTokenItem(
                     node_uuid=node_uuid, token=token,
@@ -728,7 +818,7 @@ async def bulk_generate_tokens(
 async def bulk_install_commands(
     request: Request,
     body: Optional[dict] = None,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "install")),
 ):
     """Generate install commands for multiple nodes.
 
@@ -738,13 +828,21 @@ async def bulk_install_commands(
     """
     from shared.database import db_service
     from shared.agent_tokens import set_node_agent_token
-    from web.backend.core.config import get_web_settings
+    from web.backend.core.agent_hmac import get_agent_install_secret
     from web.backend.schemas.bulk import BulkNodeInstallItem, BulkNodeInstallResult
 
     if not db_service.is_connected:
         raise api_error(503, E.DB_UNAVAILABLE)
+    try:
+        # Fail before creating any tokens when secure install mode is not ready.
+        get_agent_install_secret("v2.configuration-check")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     uuids = (body or {}).get("uuids", [])
+    scope = await get_scope(admin, "node", "edit")
+    if uuids and scope is not None and any(str(u).lower() not in scope for u in uuids):
+        raise api_error(403, E.FORBIDDEN)
 
     # Get nodes
     async with db_service.acquire() as conn:
@@ -757,6 +855,8 @@ async def bulk_install_commands(
             rows = await conn.fetch(
                 select_sql(NODES_TABLE, "uuid::text, name, agent_token", "ORDER BY name")
             )
+    if scope is not None:
+        rows = [row for row in rows if row["uuid"].lower() in scope]
 
     if not rows:
         return BulkNodeInstallResult(success=0, failed=0, items=[])
@@ -771,7 +871,6 @@ async def bulk_install_commands(
     elif forwarded_host:
         base_url = f"{forwarded_proto}://{forwarded_host}"
 
-    ws_secret = get_web_settings().secret_key
     script_url = "https://raw.githubusercontent.com/Case211/remnawave-admin/main/node-agent/install.sh"
 
     results = []
@@ -786,7 +885,7 @@ async def bulk_install_commands(
         try:
             # Auto-generate token if missing
             if not token:
-                token = await set_node_agent_token(db_service, node_uuid)
+                token = await set_node_agent_token(db_service, node_uuid, hmac_v2=True)
                 if not token:
                     results.append(BulkNodeInstallItem(
                         node_uuid=node_uuid, name=name, error="token generation failed",
@@ -794,7 +893,17 @@ async def bulk_install_commands(
                     failed += 1
                     continue
                 tokens_generated += 1
+            elif not token.startswith("v2."):
+                token = await set_node_agent_token(db_service, node_uuid, hmac_v2=True)
+                if not token:
+                    results.append(BulkNodeInstallItem(
+                        node_uuid=node_uuid, name=name, error="token rotation failed",
+                    ))
+                    failed += 1
+                    continue
+                tokens_generated += 1
 
+            ws_secret = get_agent_install_secret(token)
             install_cmd = (
                 f"curl -sSL {script_url} | "
                 f"bash -s -- --uuid {node_uuid} --url {base_url} --token {token} "
@@ -830,7 +939,7 @@ async def bulk_install_commands(
 async def bulk_revoke_tokens(
     request: Request,
     body: Optional[dict] = None,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("node_agents", "tokens_manage")),
 ):
     """Revoke agent tokens for multiple nodes.
 
@@ -844,13 +953,16 @@ async def bulk_revoke_tokens(
         raise api_error(503, E.DB_UNAVAILABLE)
 
     uuids = (body or {}).get("uuids", [])
+    scope = await get_scope(admin, "node", "edit")
 
     if not uuids:
         async with db_service.acquire() as conn:
             rows = await conn.fetch(
                 select_sql(NODES_TABLE, "uuid::text", "WHERE agent_token IS NOT NULL")
             )
-            uuids = [r["uuid"] for r in rows]
+            uuids = [r["uuid"] for r in rows if scope is None or r["uuid"].lower() in scope]
+    elif scope is not None and any(str(u).lower() not in scope for u in uuids):
+        raise api_error(403, E.FORBIDDEN)
 
     if not uuids:
         return BulkOperationResult(success=0, failed=0)
@@ -884,10 +996,10 @@ async def bulk_revoke_tokens(
 async def disable_node(
     node_uuid: str,
     request: Request,
-    admin: AdminUser = Depends(require_permission("nodes", "edit")),
+    admin: AdminUser = Depends(require_permission("nodes", "disable")),
 ):
     """Disable a node."""
-    if not await check_access(admin, "node", node_uuid, "edit"):
+    if not await check_access(admin, "node", node_uuid, "disable"):
         raise api_error(403, E.FORBIDDEN)
     try:
         from shared.api_client import api_client

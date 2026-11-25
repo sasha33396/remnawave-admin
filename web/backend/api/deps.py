@@ -1,6 +1,7 @@
 """API dependencies for web panel."""
 import functools
 import ipaddress
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Set
@@ -453,7 +454,10 @@ def require_permission(resource: str, action: str):
 
     Admins with role "superadmin" (or from legacy ADMINS env) bypass checks.
     """
-    async def _check(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
+    async def _check(
+        request: Request,
+        admin: AdminUser = Depends(get_current_admin),
+    ) -> AdminUser:
         # Legacy fallback: admins without account_id (from ADMINS env or .env creds)
         # are treated as superadmin with full access
         if admin.account_id is None:
@@ -472,6 +476,18 @@ def require_permission(resource: str, action: str):
                 "Permission denied: %s (%s) -> %s:%s",
                 admin.username, admin.role, resource, action,
             )
+            try:
+                from web.backend.core.audit import write_audit_log
+                await write_audit_log(
+                    admin_id=admin.account_id,
+                    admin_username=admin.username,
+                    action="permission.denied",
+                    resource=resource,
+                    details=json.dumps({"required_action": action, "path": request.url.path}),
+                    ip_address=get_client_ip(request),
+                )
+            except Exception as audit_error:
+                logger.debug("Denied-permission audit failed: %s", audit_error)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied: {resource}:{action}",

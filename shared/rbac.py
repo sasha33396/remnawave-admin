@@ -210,6 +210,9 @@ async def get_scope(
                 continue
             scope_type = r.get("scope_type")
             scope_value = r.get("scope_value", "")
+            if scope_type == "all":
+                _scope_cache.setdefault(cache_key, {})[(resource_type, action)] = None
+                return None
             if scope_type == "uuid":
                 allowed.add(scope_value.lower())
             elif scope_type == "tag":

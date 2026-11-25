@@ -27,7 +27,7 @@ class SnippetDelete(BaseModel):
 
 @router.get("")
 async def list_snippets(
-    admin: AdminUser = Depends(require_permission("resources", "view")),
+    admin: AdminUser = Depends(require_permission("snippets", "view")),
 ):
     """List all config snippets."""
     try:
@@ -44,7 +44,7 @@ async def list_snippets(
 @router.post("")
 async def create_snippet(
     data: SnippetCreate,
-    admin: AdminUser = Depends(require_permission("resources", "create")),
+    admin: AdminUser = Depends(require_permission("snippets", "create")),
 ):
     """Create a new config snippet."""
     try:
@@ -59,7 +59,7 @@ async def create_snippet(
 @router.patch("")
 async def update_snippet(
     data: SnippetUpdate,
-    admin: AdminUser = Depends(require_permission("resources", "edit")),
+    admin: AdminUser = Depends(require_permission("snippets", "edit")),
 ):
     """Update a config snippet."""
     try:
@@ -74,7 +74,7 @@ async def update_snippet(
 @router.delete("")
 async def delete_snippet(
     data: SnippetDelete,
-    admin: AdminUser = Depends(require_permission("resources", "delete")),
+    admin: AdminUser = Depends(require_permission("snippets", "delete")),
 ):
     """Delete a config snippet."""
     try:

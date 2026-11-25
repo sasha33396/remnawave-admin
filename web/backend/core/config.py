@@ -20,6 +20,10 @@ class WebSettings(BaseSettings):
     # App
     debug: bool = Field(default=False, alias="WEB_DEBUG")
     secret_key: str = Field(..., alias="WEB_SECRET_KEY")
+    # Dedicated root for per-agent HMAC material.  If unset, signature
+    # verification remains in legacy mode for existing agents, but generation
+    # of new install commands is disabled so WEB_SECRET_KEY is never exposed.
+    node_agent_hmac_secret: Optional[str] = Field(default=None, alias="NODE_AGENT_HMAC_SECRET")
     host: str = Field(default="0.0.0.0", alias="WEB_HOST")
     port: int = Field(default=8081, alias="WEB_PORT")
 

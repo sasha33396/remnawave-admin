@@ -2,6 +2,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from web.backend.core.resource_security import config_revision
 
 
 class TestProfileCrud:
@@ -110,7 +111,9 @@ class TestConfigVersions:
     @pytest.mark.asyncio
     async def test_get_version_and_404(self, client):
         db = AsyncMock()
-        db.get_config_version = AsyncMock(return_value={"id": 7, "content": "{}"})
+        db.get_config_version = AsyncMock(return_value={
+            "id": 7, "entity_type": "profile", "entity_id": "u-1", "content": "{}",
+        })
         with patch("shared.database.db_service", db):
             ok = await client.get("/api/v2/config-profiles/versions/7")
         assert ok.status_code == 200 and ok.json()["content"] == "{}"
@@ -126,10 +129,18 @@ class TestConfigVersions:
         db.list_config_versions = AsyncMock(return_value=[{"id": 1}])  # бейзлайн уже есть
         db.save_config_version = AsyncMock(return_value=2)
         api = AsyncMock()
+        original = {"log": {}}
+        api.get_config_profile_by_uuid = AsyncMock(
+            return_value={"response": {"name": "Main", "config": original}}
+        )
         api.update_config_profile = AsyncMock(return_value={"response": {"ok": True}})
         with patch("shared.database.db_service", db), \
              patch("shared.api_client.api_client", api):
-            resp = await client.patch("/api/v2/config-profiles/u-1", json={"log": {}})
+            resp = await client.patch(
+                "/api/v2/config-profiles/u-1",
+                json={"log": {}},
+                headers={"If-Match": config_revision(original)},
+            )
         assert resp.status_code == 200
         api.update_config_profile.assert_awaited_once_with({"uuid": "u-1", "config": {"log": {}}})
         # снапшот новой версии записан
@@ -145,13 +156,21 @@ class TestConfigVersions:
         db.list_config_versions = AsyncMock(return_value=[{"id": 1}])
         db.save_config_version = AsyncMock()
         api = AsyncMock()
+        original = {"inbounds": []}
+        api.get_config_profile_by_uuid = AsyncMock(
+            return_value={"response": {"name": "Main", "config": original}}
+        )
         api.update_config_profile = AsyncMock(
             side_effect=ServerError("All inbounds must have a unique tag. [A061]", status_code=500))
         with patch("shared.database.db_service", db), \
              patch("shared.api_client.api_client", api):
-            resp = await client.patch("/api/v2/config-profiles/u-1", json={"inbounds": []})
+            resp = await client.patch(
+                "/api/v2/config-profiles/u-1",
+                json={"inbounds": []},
+                headers={"If-Match": config_revision(original)},
+            )
         assert resp.status_code == 400
-        assert "unique tag" in resp.json()["detail"]
+        assert resp.json()["detail"] == "Panel rejected the configuration"
         db.save_config_version.assert_not_awaited()  # версия при провале не пишется
 
     @pytest.mark.asyncio
@@ -166,7 +185,11 @@ class TestConfigVersions:
         api.update_config_profile = AsyncMock(return_value={"response": {"ok": True}})
         with patch("shared.database.db_service", db), \
              patch("shared.api_client.api_client", api):
-            resp = await client.patch("/api/v2/config-profiles/u-2", json={"new": True})
+            resp = await client.patch(
+                "/api/v2/config-profiles/u-2",
+                json={"new": True},
+                headers={"If-Match": config_revision({"old": True})},
+            )
         assert resp.status_code == 200
         # два снапшота: бейзлайн «до» + новая версия
         assert db.save_config_version.await_count == 2

@@ -91,13 +91,13 @@ async def test_rbac_allows_superadmin(client, app):
             mock_req.assert_called_once()
 
 
-async def test_rbac_allows_unknown_resource(client, app):
+async def test_rbac_denies_unknown_resource_for_attributed_admin(client, app):
     headers = _admin_headers(account_id=1)
     with patch.object(api_client, "request", new_callable=AsyncMock) as mock_req:
         mock_req.return_value = {"ok": True}
         resp = await client.get("/api/v2/internal/proxy/api/subscriptions", headers=headers)
-        assert resp.status_code == 200
-        mock_req.assert_called_once()
+        assert resp.status_code == 403
+        mock_req.assert_not_called()
 
 
 async def test_rbac_allows_legacy_admin_no_account_id(client, app):
@@ -249,7 +249,8 @@ async def test_get_maps_to_view_action(client, app):
             with patch("shared.rbac.has_permission", new_callable=AsyncMock) as mock_perm:
                 mock_perm.return_value = True
                 await client.get("/api/v2/internal/proxy/api/nodes", headers=headers)
-                mock_perm.assert_called_once_with(2, "nodes", "view")
+                assert mock_perm.await_args_list[0].args == (2, "nodes", "view")
+                assert mock_perm.await_args_list[1].args == (2, "nodes", "secrets_view")
 
 
 async def test_post_to_root_maps_to_create_action(client, app):
