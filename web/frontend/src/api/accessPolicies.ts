@@ -1,8 +1,8 @@
 import client from './client'
 
-export type ResourceType = 'node' | 'host' | 'squad'
-export type ScopeType = 'uuid' | 'tag'
-export type PolicyAction = 'view' | 'edit' | 'delete'
+export type ResourceType = 'node' | 'host' | 'squad' | 'config_profile'
+export type ScopeType = 'uuid' | 'tag' | 'all'
+export type PolicyAction = 'view' | 'edit' | 'delete' | 'restart' | 'enable' | 'disable'
 
 export interface PolicyRule {
   id?: number

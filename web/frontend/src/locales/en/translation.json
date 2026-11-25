@@ -5360,16 +5360,21 @@
     "resource": {
       "node": "Node",
       "host": "Host",
-      "squad": "Squad"
+      "squad": "Squad",
+      "config_profile": "Config profile"
     },
     "scope": {
       "uuid": "By UUID",
-      "tag": "By Tag"
+      "tag": "By Tag",
+      "all": "All resources"
     },
     "action": {
       "view": "View",
       "edit": "Edit",
-      "delete": "Delete"
+      "delete": "Delete",
+      "restart": "Restart",
+      "enable": "Enable",
+      "disable": "Disable"
     },
     "deleteConfirm": {
       "description": "This access policy will be removed. Any admins and roles using it will lose their restrictions.",

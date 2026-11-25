@@ -56,12 +56,27 @@ export default function Resources() {
   const queryClient = useQueryClient()
 
   // Permissions
-  const canCreate = useHasPermission('resources', 'create')
-  const canUpdate = useHasPermission('resources', 'edit')
-  const canDelete = useHasPermission('resources', 'delete')
+  const canViewTemplates = useHasPermission('subscription_templates', 'view')
+  const canCreateTemplates = useHasPermission('subscription_templates', 'create')
+  const canUpdateTemplates = useHasPermission('subscription_templates', 'edit')
+  const canDeleteTemplates = useHasPermission('subscription_templates', 'delete')
+  const canViewSnippets = useHasPermission('snippets', 'view')
+  const canCreateSnippets = useHasPermission('snippets', 'create')
+  const canUpdateSnippets = useHasPermission('snippets', 'edit')
+  const canDeleteSnippets = useHasPermission('snippets', 'delete')
+  const canViewProfiles = useHasPermission('config_profiles', 'view')
+  const canCreateProfiles = useHasPermission('config_profiles', 'create')
+  const canUpdateProfiles = useHasPermission('config_profiles', 'edit')
+  const canDeleteProfiles = useHasPermission('config_profiles', 'delete')
 
   // Tab state — управление API-токенами панели убрано (только в самой Remnawave)
-  const [activeTab, setActiveTab] = useTabParam('templates', ['templates', 'snippets', 'profiles'])
+  const allowedTabs = [
+    ...(canViewTemplates ? ['templates' as const] : []),
+    ...(canViewSnippets ? ['snippets' as const] : []),
+    ...(canViewProfiles ? ['profiles' as const] : []),
+  ]
+  const defaultTab = allowedTabs[0] || 'profiles'
+  const [activeTab, setActiveTab] = useTabParam(defaultTab, allowedTabs)
 
   // ── Templates ───────────────────────────────────────────────────
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false)
@@ -73,6 +88,7 @@ export default function Resources() {
   const { data: templates = [], isLoading: templatesLoading, isError: isTemplatesError, refetch: refetchTemplates } = useQuery({
     queryKey: ['templates'],
     queryFn: resourcesApi.getTemplates,
+    enabled: canViewTemplates,
   })
 
   const createTemplateMutation = useMutation({
@@ -112,6 +128,7 @@ export default function Resources() {
   const { data: snippets = [], isLoading: snippetsLoading, isError: isSnippetsError, refetch: refetchSnippets } = useQuery({
     queryKey: ['snippets'],
     queryFn: resourcesApi.getSnippets,
+    enabled: canViewSnippets,
   })
 
   const createSnippetMutation = useMutation({
@@ -193,6 +210,7 @@ export default function Resources() {
   const { data: configProfiles = [], isLoading: profilesLoading, isError: isProfilesError, refetch: refetchProfiles } = useQuery({
     queryKey: ['config-profiles'],
     queryFn: resourcesApi.getConfigProfiles,
+    enabled: canViewProfiles,
   })
 
   const createProfileMutation = useMutation({
@@ -232,7 +250,7 @@ export default function Resources() {
       toast.error(e.response?.data?.detail || t('common.error')),
   })
 
-  const hasError = isTemplatesError || isSnippetsError || isProfilesError
+  const hasError = (canViewTemplates && isTemplatesError) || (canViewSnippets && isSnippetsError) || (canViewProfiles && isProfilesError)
   const handleRetry = () => { refetchTemplates(); refetchSnippets(); refetchProfiles() }
 
   if (hasError) {
@@ -261,18 +279,18 @@ export default function Resources() {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="templates">
+          {canViewTemplates && <TabsTrigger value="templates">
             <Code className="w-4 h-4 mr-2" />
             {t('resources.tabs.templates')}
-          </TabsTrigger>
-          <TabsTrigger value="snippets">
+          </TabsTrigger>}
+          {canViewSnippets && <TabsTrigger value="snippets">
             <Code className="w-4 h-4 mr-2" />
             {t('resources.tabs.snippets')}
-          </TabsTrigger>
-          <TabsTrigger value="profiles">
+          </TabsTrigger>}
+          {canViewProfiles && <TabsTrigger value="profiles">
             <Settings className="w-4 h-4 mr-2" />
             {t('resources.tabs.profiles')}
-          </TabsTrigger>
+          </TabsTrigger>}
         </TabsList>
 
         {/* ── Tab 2: Templates ─────────────────────────────────── */}
@@ -283,7 +301,7 @@ export default function Resources() {
               <Button variant="outline" size="sm" onClick={() => refetchTemplates()}>
                 <RefreshCw className="w-4 h-4" />
               </Button>
-              {canCreate && (
+              {canCreateTemplates && (
                 <Button size="sm" onClick={() => setTemplateDialogOpen(true)}>
                   <Plus className="w-4 h-4 mr-2" />
                   {t('resources.templates.create')}
@@ -311,13 +329,13 @@ export default function Resources() {
                 <Card
                   key={template.uuid}
                   className="border-[var(--glass-border)] bg-[var(--glass-bg)] hover:border-[var(--glass-border)] transition-colors cursor-pointer"
-                  onClick={() => canUpdate && setEditingTemplate(template)}
+                  onClick={() => canUpdateTemplates && setEditingTemplate(template)}
                 >
                   <CardContent className="p-4">
                     <div className="space-y-3">
                       <div className="flex items-start justify-between gap-2">
                         <h3 className="font-medium text-white truncate flex-1">{template.name}</h3>
-                        {canDelete && (
+                        {canDeleteTemplates && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -359,7 +377,7 @@ export default function Resources() {
               <Button variant="outline" size="sm" onClick={() => refetchSnippets()}>
                 <RefreshCw className="w-4 h-4" />
               </Button>
-              {canCreate && (
+              {canCreateSnippets && (
                 <Button size="sm" onClick={() => setSnippetDialogOpen(true)}>
                   <Plus className="w-4 h-4 mr-2" />
                   {t('resources.snippets.create')}
@@ -387,7 +405,7 @@ export default function Resources() {
                 <Card
                   key={snippet.name}
                   className="border-[var(--glass-border)] bg-[var(--glass-bg)] hover:border-[var(--glass-border)] transition-colors cursor-pointer"
-                  onClick={() => canUpdate && openEditSnippet(snippet)}
+                  onClick={() => canUpdateSnippets && openEditSnippet(snippet)}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-4">
@@ -403,7 +421,7 @@ export default function Resources() {
                           {JSON.stringify(snippet.snippet).length > 200 ? '...' : ''}
                         </pre>
                       </div>
-                      {canDelete && (
+                      {canDeleteSnippets && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -432,7 +450,7 @@ export default function Resources() {
               <Button variant="outline" size="sm" onClick={() => refetchProfiles()} aria-label={t('common.refresh')}>
                 <RefreshCw className="w-4 h-4" />
               </Button>
-              {canCreate && (
+              {canCreateProfiles && (
                 <Button size="sm" className="gap-1.5" onClick={() => setCreateProfileOpen(true)}>
                   <Plus className="w-4 h-4" /> {t('resources.profiles.create')}
                 </Button>
@@ -475,14 +493,14 @@ export default function Resources() {
                             <FileJson className="w-3.5 h-3.5 mr-1" />
                             {t('resources.profiles.openInEditor')}
                           </Button>
-                          {canUpdate && (
+                          {canUpdateProfiles && (
                             <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-dark-200 hover:text-white"
                               title={t('resources.profiles.rename')} aria-label={t('resources.profiles.rename')}
                               onClick={() => setRenameProfile({ uuid: profile.uuid, name: profile.name })}>
                               <Settings className="w-3.5 h-3.5" />
                             </Button>
                           )}
-                          {canDelete && (
+                          {canDeleteProfiles && (
                             <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
                               title={t('common.delete')} aria-label={t('common.delete')}
                               onClick={() => setDeleteProfileConfirm(profile)}>

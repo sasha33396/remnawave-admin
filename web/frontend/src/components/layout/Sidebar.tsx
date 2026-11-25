@@ -224,6 +224,13 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
   // Check if a nav item is visible based on permissions
   const isItemVisible = (item: NavItem) => {
+    if (item.href === '/resources') {
+      return (
+        hasPermission('config_profiles', 'view')
+        || hasPermission('subscription_templates', 'view')
+        || hasPermission('snippets', 'view')
+      )
+    }
     if (!item.permission) return true
     return hasPermission(item.permission.resource, item.permission.action)
   }

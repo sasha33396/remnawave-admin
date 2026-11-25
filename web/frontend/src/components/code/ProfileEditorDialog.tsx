@@ -12,6 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { resourcesApi, ConfigProfile, ConfigVersion } from '@/api/resources'
+import { useHasPermission } from '@/components/PermissionGate'
 import { CodeEditor } from './CodeEditor'
 import { CodeDiff } from './CodeDiff'
 import { XRAY_SNIPPETS, SNIPPET_CATEGORIES, XraySnippet } from './xray.snippets'
@@ -50,6 +51,10 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
   // пара ключей x25519 для Reality (генерит панель)
   const [keypair, setKeypair] = useState<{ publicKey: string; privateKey: string } | null>(null)
   const [keysOpen, setKeysOpen] = useState(false)
+  const canEdit = useHasPermission('config_profiles', 'edit')
+  const canViewSecrets = useHasPermission('config_profiles', 'secrets_view')
+  const canEditSecrets = useHasPermission('config_profiles', 'secrets_edit')
+  const canFullEdit = useHasPermission('config_profiles', 'full_edit')
 
   // конфиг профиля из панели
   const { data: profileData, isLoading } = useQuery({
@@ -213,7 +218,11 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
   const saveMut = useMutation({
     mutationFn: async () => {
       const parsed = JSON.parse(text) // проверено до открытия диффа
-      await resourcesApi.updateConfigProfile(profile!.uuid, parsed)
+      await resourcesApi.updateConfigProfile(
+        profile!.uuid,
+        parsed,
+        (profileData as Record<string, any> | undefined)?._revision,
+      )
     },
     onSuccess: () => {
       toast.success(t('resources.editor.saved'))
@@ -232,7 +241,7 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
   })
 
   const dirty = text !== original
-  const canSave = dirty && errorCount === 0 && !!text.trim() && view === 'source'
+  const canSave = canEdit && dirty && errorCount === 0 && !!text.trim() && view === 'source'
 
   const openDiff = () => {
     try {
@@ -304,6 +313,11 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
               {(profileData as Record<string, any> | undefined)?.updatedAt &&
                 t('resources.editor.updatedAt', { date: fmtDate((profileData as Record<string, any>).updatedAt) })}
             </p>
+            {!canViewSecrets && (
+              <p className="text-xs text-amber-300">
+                {t('resources.editor.secretsHidden', 'Confidential fields are hidden. Original values are preserved automatically when saving.')}
+              </p>
+            )}
           </DialogHeader>
 
           <div className="flex-1 min-h-0 flex gap-3">
@@ -334,7 +348,7 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
               ) : isLoading ? (
                 <Skeleton className="h-full w-full" />
               ) : (
-                <CodeEditor value={text} onChange={setText} schema="xray"
+                  <CodeEditor value={text} onChange={setText} schema="xray" readOnly={!canEdit}
                   onDiagnostics={(e, h) => { setErrorCount(e); setHintCount(h) }} viewRef={cmRef} />
               )}
             </div>
@@ -354,11 +368,11 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
               <Button variant="outline" size="sm" onClick={formatJson}>
                 {t('resources.editor.format')}
               </Button>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={generateKeys}
+              {canEditSecrets && <Button variant="outline" size="sm" className="gap-1.5" onClick={generateKeys}
                 title={t('resources.editor.keysHint')}>
                 <Key className="w-4 h-4" /> {t('resources.editor.keys')}
-              </Button>
-              <DropdownMenu>
+              </Button>}
+              {canFullEdit && <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="gap-1.5"
                     title={t('resources.editor.blocks.hint')}>
@@ -385,7 +399,7 @@ export function ProfileEditorDialog({ profile, onClose }: Props) {
                     </div>
                   ))}
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </DropdownMenu>}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="gap-1.5">

@@ -100,6 +100,8 @@ interface Node {
   note?: string | null
   proxy_url?: string | null
   node_consumption_multiplier?: number | null
+  config_profile_uuid?: string | null
+  active_inbounds?: string[]
   traffic_total_bytes: number
   traffic_today_bytes: number
   created_at: string
@@ -145,6 +147,7 @@ function NodeEditModal({
   error: string
 }) {
   const { t } = useTranslation()
+  const canAssignProfile = useHasPermission('config_profiles', 'view')
   const initForm = (): NodeEditFormData => ({
     name: node.name,
     address: node.address,
@@ -154,9 +157,27 @@ function NodeEditModal({
     node_consumption_multiplier: node.node_consumption_multiplier != null ? String(node.node_consumption_multiplier) : '',
   })
   const [form, setForm] = useState<NodeEditFormData>(initForm)
+  const [selectedProfileUuid, setSelectedProfileUuid] = useState(node.config_profile_uuid || '')
+  const [selectedInbounds, setSelectedInbounds] = useState<string[]>(node.active_inbounds || [])
+
+  const { data: configProfiles = [] } = useQuery({
+    queryKey: ['config-profiles'],
+    queryFn: resourcesApi.getConfigProfiles,
+    enabled: open && canAssignProfile,
+  })
+  const { data: profileInbounds = [] } = useQuery<Inbound[]>({
+    queryKey: ['config-profile-inbounds', selectedProfileUuid],
+    queryFn: async () => {
+      const { data } = await client.get(`/config-profiles/${selectedProfileUuid}/inbounds`)
+      return Array.isArray(data) ? data : []
+    },
+    enabled: open && canAssignProfile && !!selectedProfileUuid,
+  })
 
   useEffect(() => {
     setForm(initForm())
+    setSelectedProfileUuid(node.config_profile_uuid || '')
+    setSelectedInbounds(node.active_inbounds || [])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node])
 
@@ -173,6 +194,19 @@ function NodeEditModal({
       const m = parseFloat(form.node_consumption_multiplier)
       if (form.node_consumption_multiplier === '') updateData.node_consumption_multiplier = null
       else if (!isNaN(m)) updateData.node_consumption_multiplier = m
+    }
+    const originalInbounds = [...(node.active_inbounds || [])].sort()
+    const nextInbounds = [...selectedInbounds].sort()
+    if (
+      canAssignProfile
+      && selectedProfileUuid
+      && (
+        selectedProfileUuid !== (node.config_profile_uuid || '')
+        || JSON.stringify(originalInbounds) !== JSON.stringify(nextInbounds)
+      )
+    ) {
+      updateData.config_profile_uuid = selectedProfileUuid
+      updateData.active_inbounds = selectedInbounds
     }
     if (Object.keys(updateData).length === 0) {
       onOpenChange(false)
@@ -257,6 +291,49 @@ function NodeEditModal({
               placeholder="1.0"
             />
           </div>
+          {canAssignProfile && (
+            <>
+              <div className="space-y-2">
+                <Label>{t('nodes.createNode.configProfile')}</Label>
+                <Select
+                  value={selectedProfileUuid}
+                  onValueChange={(value) => {
+                    setSelectedProfileUuid(value)
+                    setSelectedInbounds([])
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('nodes.createNode.selectProfile')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {configProfiles.map((profile: { uuid: string; name: string }) => (
+                      <SelectItem key={profile.uuid} value={profile.uuid}>{profile.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedProfileUuid && (
+                <div className="space-y-2">
+                  <Label>{t('nodes.createNode.inbounds')}</Label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto rounded-lg border border-dark-600 p-3">
+                    {profileInbounds.map((inbound) => (
+                      <label key={inbound.uuid} className="flex items-center gap-2 cursor-pointer">
+                        <Checkbox
+                          checked={selectedInbounds.includes(inbound.uuid)}
+                          onCheckedChange={() => setSelectedInbounds((current) =>
+                            current.includes(inbound.uuid)
+                              ? current.filter((uuid) => uuid !== inbound.uuid)
+                              : [...current, inbound.uuid]
+                          )}
+                        />
+                        <span className="text-sm">{inbound.tag}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <DialogFooter>
@@ -495,10 +572,14 @@ function AgentTokenModal({
   node,
   open,
   onOpenChange,
+  canManageTokens,
+  canInstall,
 }: {
   node: Node
   open: boolean
   onOpenChange: (open: boolean) => void
+  canManageTokens: boolean
+  canInstall: boolean
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -711,16 +792,16 @@ function AgentTokenModal({
 
             {/* Actions */}
             <div className="flex items-center gap-2 flex-wrap pt-2">
-              <Button
+              {canInstall && <Button
                 variant="secondary"
                 onClick={() => installMutation.mutate()}
                 disabled={installMutation.isPending}
               >
                 {installMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Terminal className="w-4 h-4 mr-2" />}
                 {t('nodes.agentToken.installAgent')}
-              </Button>
+              </Button>}
 
-              <Button
+              {canManageTokens && <Button
                 onClick={() => {
                   if (tokenStatus?.has_token && !generatedToken) {
                     setTokenConfirmAction('generate')
@@ -732,9 +813,9 @@ function AgentTokenModal({
               >
                 <Key className="w-4 h-4 mr-2" />
                 {generateMutation.isPending ? t('nodes.agentToken.generating') : tokenStatus?.has_token ? t('nodes.agentToken.regenerate') : t('nodes.agentToken.generate')}
-              </Button>
+              </Button>}
 
-              {tokenStatus?.has_token && (
+              {canManageTokens && tokenStatus?.has_token && (
                 <Button
                   variant="secondary"
                   className="text-red-400 hover:text-red-300"
@@ -1009,6 +1090,11 @@ function NodeCard({
   onFetchIps,
   canEdit,
   canDelete,
+  canRestart,
+  canEnable,
+  canDisable,
+  canManageAgent,
+  canViewAgent,
   dragHandle,
   isDragging,
 }: {
@@ -1022,6 +1108,11 @@ function NodeCard({
   onFetchIps: () => void
   canEdit: boolean
   canDelete: boolean
+  canRestart: boolean
+  canEnable: boolean
+  canDisable: boolean
+  canManageAgent: boolean
+  canViewAgent: boolean
   dragHandle?: React.ReactNode
   isDragging?: boolean
 }) {
@@ -1035,6 +1126,10 @@ function NodeCard({
   const scopeAllowsDelete = node.allowed_actions == null || node.allowed_actions.includes('delete')
   const effectiveCanEdit = canEdit && scopeAllowsEdit
   const effectiveCanDelete = canDelete && scopeAllowsDelete
+  const effectiveCanRestart = canRestart && (node.allowed_actions == null || node.allowed_actions.includes('restart'))
+  const effectiveCanEnable = canEnable && (node.allowed_actions == null || node.allowed_actions.includes('enable'))
+  const effectiveCanDisable = canDisable && (node.allowed_actions == null || node.allowed_actions.includes('disable'))
+  const canFetchIps = useHasPermission('users', 'view')
 
   const statusVariant = node.is_disabled
     ? 'secondary'
@@ -1103,14 +1198,14 @@ function NodeCard({
           </div>
 
           <div className="flex items-center gap-2">
-            <AgentBadge node={node} />
+            {canViewAgent && <AgentBadge node={node} />}
 
             <Badge variant={statusVariant as 'success' | 'secondary' | 'destructive'}>
               {statusText}
             </Badge>
 
             {/* Actions menu */}
-            {(effectiveCanEdit || effectiveCanDelete) && (
+            {(effectiveCanEdit || effectiveCanDelete || effectiveCanRestart || effectiveCanEnable || effectiveCanDisable || canManageAgent) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={t('common.openMenu')}>
@@ -1118,7 +1213,7 @@ function NodeCard({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {effectiveCanEdit && (
+                  {effectiveCanRestart && (
                     <DropdownMenuItem onClick={onRestart}>
                       <RefreshCw className="w-4 h-4 mr-2" />
                       {t('nodes.actions.restart')}
@@ -1130,18 +1225,18 @@ function NodeCard({
                       {t('nodes.actions.edit')}
                     </DropdownMenuItem>
                   )}
-                  {effectiveCanEdit && (
+                  {canManageAgent && (
                     <DropdownMenuItem onClick={onTokenManage}>
                       <Key className="w-4 h-4 mr-2" />
                       {t('nodes.actions.agentToken')}
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem onClick={onFetchIps}>
+                  {canFetchIps && <DropdownMenuItem onClick={onFetchIps}>
                     <Scan className="w-4 h-4 mr-2" />
                     {t('nodes.actions.fetchUsersIps')}
-                  </DropdownMenuItem>
-                  {(effectiveCanEdit || effectiveCanDelete) && <DropdownMenuSeparator />}
-                  {effectiveCanEdit && (
+                  </DropdownMenuItem>}
+                  {(effectiveCanEdit || effectiveCanDelete || effectiveCanEnable || effectiveCanDisable) && <DropdownMenuSeparator />}
+                  {(node.is_disabled ? effectiveCanEnable : effectiveCanDisable) && (
                     node.is_disabled ? (
                       <DropdownMenuItem onClick={onEnable} className="text-green-400 focus:text-green-400">
                         <Play className="w-4 h-4 mr-2" />
@@ -1381,6 +1476,11 @@ function SortableNodeCard({
   onFetchIps: () => void
   canEdit: boolean
   canDelete: boolean
+  canRestart: boolean
+  canEnable: boolean
+  canDisable: boolean
+  canManageAgent: boolean
+  canViewAgent: boolean
 }) {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -1433,6 +1533,13 @@ export default function Nodes() {
   const canCreate = useHasPermission('nodes', 'create')
   const canEdit = useHasPermission('nodes', 'edit')
   const canDelete = useHasPermission('nodes', 'delete')
+  const canRestart = useHasPermission('nodes', 'restart')
+  const canEnable = useHasPermission('nodes', 'enable')
+  const canDisable = useHasPermission('nodes', 'disable')
+  const canManageAgentTokens = useHasPermission('node_agents', 'tokens_manage')
+  const canInstallAgent = useHasPermission('node_agents', 'install')
+  const canViewAgent = useHasPermission('node_agents', 'view')
+  const canManageAgent = canViewAgent && (canManageAgentTokens || canInstallAgent)
   const [editingNode, setEditingNode] = useState<Node | null>(null)
   const [editError, setEditError] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -1713,6 +1820,11 @@ export default function Nodes() {
           nodes={sortedNodes}
           canEdit={canEdit}
           canDelete={canDelete}
+          canRestart={canRestart}
+          canEnable={canEnable}
+          canDisable={canDisable}
+          canManageAgent={canManageAgent}
+          canViewAgent={canViewAgent}
           onRestart={(n) => restartNode.mutate(n.uuid)}
           onEdit={(n) => { setEditingNode(nodes.find((x) => x.uuid === n.uuid) ?? null); setEditError('') }}
           onEnable={(n) => enableNode.mutate(n.uuid)}
@@ -1752,6 +1864,11 @@ export default function Nodes() {
                         node={node}
                         canEdit={canEdit}
                         canDelete={canDelete}
+                        canRestart={canRestart}
+                        canEnable={canEnable}
+                        canDisable={canDisable}
+                        canManageAgent={canManageAgent}
+                        canViewAgent={canViewAgent}
                         onRestart={(n) => restartNode.mutate(n.uuid)}
                         onEdit={(n) => { setEditingNode(nodes.find((x) => x.uuid === n.uuid) ?? null); setEditError('') }}
                         onEnable={(n) => enableNode.mutate(n.uuid)}
@@ -1773,6 +1890,11 @@ export default function Nodes() {
                         onFetchIps={() => setIpsNode(node)}
                         canEdit={canEdit}
                         canDelete={canDelete}
+                        canRestart={canRestart}
+                        canEnable={canEnable}
+                        canDisable={canDisable}
+                        canManageAgent={canManageAgent}
+                        canViewAgent={canViewAgent}
                       />
                     )}
                   </div>
@@ -1809,6 +1931,8 @@ export default function Nodes() {
         <AgentTokenModal
           node={tokenNode}
           open={!!tokenNode}
+          canManageTokens={canManageAgentTokens}
+          canInstall={canInstallAgent}
           onOpenChange={(open) => { if (!open) setTokenNode(null) }}
         />
       )}

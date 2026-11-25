@@ -38,9 +38,8 @@ interface ResourceOption {
   label: string
 }
 
-const RESOURCE_TYPES: ResourceType[] = ['node', 'host', 'squad']
-const SCOPE_TYPES: ScopeType[] = ['uuid', 'tag']
-const ALL_ACTIONS: PolicyAction[] = ['view', 'edit', 'delete']
+const RESOURCE_TYPES: ResourceType[] = ['node', 'host', 'squad', 'config_profile']
+const ALL_ACTIONS: PolicyAction[] = ['view', 'edit', 'delete', 'restart', 'enable', 'disable']
 
 
 function useResourceOptions(enabled: boolean = true) {
@@ -82,11 +81,25 @@ function useResourceOptions(enabled: boolean = true) {
     enabled,
     staleTime: 60_000,
   })
+  const profilesQ = useQuery({
+    queryKey: ['policy-options', 'config-profiles'],
+    queryFn: async () => {
+      const { data } = await client.get('/config-profiles')
+      const items = Array.isArray(data?.items) ? data.items : []
+      return items.map((p: any) => ({
+        uuid: p.uuid,
+        label: p.name || p.uuid,
+      })) as ResourceOption[]
+    },
+    enabled,
+    staleTime: 60_000,
+  })
   return {
     node: nodesQ.data || [],
     host: hostsQ.data || [],
     squad: squadsQ.data || [],
-    loading: nodesQ.isLoading || hostsQ.isLoading || squadsQ.isLoading,
+    config_profile: profilesQ.data || [],
+    loading: nodesQ.isLoading || hostsQ.isLoading || squadsQ.isLoading || profilesQ.isLoading,
   }
 }
 
@@ -401,13 +414,25 @@ function PolicyEditor({
             )}
             {rules.map((rule, i) => {
               const resOptions = options[rule.resource_type] || []
+              const scopeTypes: ScopeType[] = (
+                rule.resource_type === 'node' || rule.resource_type === 'host'
+                  ? ['uuid', 'tag', 'all']
+                  : ['uuid', 'all']
+              )
+              const allowedActions = rule.resource_type === 'node'
+                ? ALL_ACTIONS
+                : ALL_ACTIONS.filter((action) => !['restart', 'enable', 'disable'].includes(action))
               return (
                 <div key={i} className="grid grid-cols-12 gap-2 items-start p-2 rounded-lg border border-white/5 bg-white/[0.02]">
                   <div className="col-span-12 md:col-span-2">
                     <Label className="text-[10px]">{t('accessPolicies.resourceType')}</Label>
                     <Select
                       value={rule.resource_type}
-                      onValueChange={(v) => updateRule(i, { resource_type: v as ResourceType, scope_value: '' })}
+                      onValueChange={(v) => updateRule(i, {
+                        resource_type: v as ResourceType,
+                        scope_type: 'uuid',
+                        scope_value: '',
+                      })}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -421,11 +446,14 @@ function PolicyEditor({
                     <Label className="text-[10px]">{t('accessPolicies.scopeType')}</Label>
                     <Select
                       value={rule.scope_type}
-                      onValueChange={(v) => updateRule(i, { scope_type: v as ScopeType, scope_value: '' })}
+                      onValueChange={(v) => updateRule(i, {
+                        scope_type: v as ScopeType,
+                        scope_value: v === 'all' ? '*' : '',
+                      })}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {SCOPE_TYPES.map(st => (
+                        {scopeTypes.map(st => (
                           <SelectItem key={st} value={st}>{t(`accessPolicies.scope.${st}`)}</SelectItem>
                         ))}
                       </SelectContent>
@@ -433,7 +461,9 @@ function PolicyEditor({
                   </div>
                   <div className="col-span-12 md:col-span-4">
                     <Label className="text-[10px]">{t('accessPolicies.scopeValue')}</Label>
-                    {rule.scope_type === 'uuid' ? (
+                    {rule.scope_type === 'all' ? (
+                      <Input value="*" disabled />
+                    ) : rule.scope_type === 'uuid' ? (
                       <Select
                         value={rule.scope_value}
                         onValueChange={(v) => updateRule(i, { scope_value: v })}
@@ -470,7 +500,7 @@ function PolicyEditor({
                   <div className="col-span-10 md:col-span-3">
                     <Label className="text-[10px]">{t('accessPolicies.actions')}</Label>
                     <div className="flex gap-3 items-center pt-2">
-                      {ALL_ACTIONS.map((a) => (
+                      {allowedActions.map((a) => (
                         <label key={a} className="flex items-center gap-1 text-xs">
                           <Checkbox
                             checked={rule.actions.includes(a)}

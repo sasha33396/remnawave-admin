@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { MoreVertical, RotateCcw, Pencil, Play, Square, Key, Globe, Trash2, Bot, BotOff } from '@/components/brand/icons'
 import { cn } from '@/lib/utils'
+import { useHasPermission } from '@/components/PermissionGate'
 
 export interface NodeRow {
   uuid: string
@@ -60,6 +61,11 @@ export interface NodesTableProps {
   nodes: NodeRow[]
   canEdit: boolean
   canDelete: boolean
+  canRestart: boolean
+  canEnable: boolean
+  canDisable: boolean
+  canManageAgent: boolean
+  canViewAgent: boolean
   onRestart: (n: NodeRow) => void
   onEdit: (n: NodeRow) => void
   onEnable: (n: NodeRow) => void
@@ -73,6 +79,11 @@ export function NodesTable({
   nodes,
   canEdit,
   canDelete,
+  canRestart,
+  canEnable,
+  canDisable,
+  canManageAgent,
+  canViewAgent,
   onRestart,
   onEdit,
   onEnable,
@@ -83,6 +94,7 @@ export function NodesTable({
 }: NodesTableProps) {
   const { t } = useTranslation()
   const { formatBytes, formatTimeAgo } = useFormatters()
+  const canFetchIps = useHasPermission('users', 'view')
 
   const columns: ColumnSpec<NodeRow>[] = useMemo(
     () => [
@@ -150,6 +162,9 @@ export function NodesTable({
           const agent = agentStatus(node)
           const scopeEdit = canEdit && (node.allowed_actions == null || node.allowed_actions.includes('edit'))
           const scopeDelete = canDelete && (node.allowed_actions == null || node.allowed_actions.includes('delete'))
+          const scopeRestart = canRestart && (node.allowed_actions == null || node.allowed_actions.includes('restart'))
+          const scopeEnable = canEnable && (node.allowed_actions == null || node.allowed_actions.includes('enable'))
+          const scopeDisable = canDisable && (node.allowed_actions == null || node.allowed_actions.includes('disable'))
           const isOnline = node.is_connected && !node.is_disabled
           return (
             <TableRow key={node.uuid}>
@@ -164,10 +179,10 @@ export function NodesTable({
                 </span>
               </TableCell>
               <TableCell className="hidden md:table-cell">
-                <span className={cn('inline-flex items-center gap-1 text-xs', AGENT_STYLE[agent])}>
+                {canViewAgent && <span className={cn('inline-flex items-center gap-1 text-xs', AGENT_STYLE[agent])}>
                   {agent === 'missing' ? <BotOff className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
                   {t(`nodes.agent.${agent}`)}
-                </span>
+                </span>}
               </TableCell>
               <TableCell className="text-right font-mono text-sm text-white">{node.users_online}</TableCell>
               <TableCell className="text-right font-mono text-xs text-dark-100 whitespace-nowrap">{formatBytes(node.traffic_today_bytes)}</TableCell>
@@ -177,7 +192,7 @@ export function NodesTable({
                 {node.last_seen_at ? formatTimeAgo(node.last_seen_at) : '—'}
               </TableCell>
               <TableCell className="text-right">
-                {(scopeEdit || scopeDelete) && (
+                {(scopeEdit || scopeDelete || scopeRestart || scopeEnable || scopeDisable || canManageAgent) && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button size="icon" variant="ghost" aria-label={t('common.openMenu')} className="h-7 w-7 text-dark-200 hover:text-white">
@@ -185,23 +200,23 @@ export function NodesTable({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {scopeEdit && isOnline && (
+                      {scopeRestart && isOnline && (
                         <DropdownMenuItem onClick={() => onRestart(node)}><RotateCcw className="w-3.5 h-3.5 mr-2" />{t('nodes.actions.restart')}</DropdownMenuItem>
                       )}
                       {scopeEdit && (
                         <DropdownMenuItem onClick={() => onEdit(node)}><Pencil className="w-3.5 h-3.5 mr-2" />{t('nodes.actions.edit', { defaultValue: 'Изменить' })}</DropdownMenuItem>
                       )}
-                      {scopeEdit && (
+                      {(node.is_disabled ? scopeEnable : scopeDisable) && (
                         node.is_disabled ? (
                           <DropdownMenuItem onClick={() => onEnable(node)}><Play className="w-3.5 h-3.5 mr-2 text-green-400" />{t('nodes.actions.enable')}</DropdownMenuItem>
                         ) : (
                           <DropdownMenuItem onClick={() => onDisable(node)}><Square className="w-3.5 h-3.5 mr-2 text-red-400" />{t('nodes.actions.disable')}</DropdownMenuItem>
                         )
                       )}
-                      {scopeEdit && (
+                      {canManageAgent && (
                         <DropdownMenuItem onClick={() => onTokenManage(node)}><Key className="w-3.5 h-3.5 mr-2" />{t('nodes.agent.token', { defaultValue: 'Токен агента' })}</DropdownMenuItem>
                       )}
-                      <DropdownMenuItem onClick={() => onFetchIps(node)}><Globe className="w-3.5 h-3.5 mr-2" />{t('nodes.actions.fetchIps', { defaultValue: 'IP юзеров' })}</DropdownMenuItem>
+                      {canFetchIps && <DropdownMenuItem onClick={() => onFetchIps(node)}><Globe className="w-3.5 h-3.5 mr-2" />{t('nodes.actions.fetchIps', { defaultValue: 'IP юзеров' })}</DropdownMenuItem>}
                       {scopeDelete && (
                         <>
                           <DropdownMenuSeparator />

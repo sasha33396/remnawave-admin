@@ -92,8 +92,10 @@ export const resourcesApi = {
     const { data } = await client.get(`/config-profiles/${uuid}/computed-config`)
     return data
   },
-  updateConfigProfile: async (uuid: string, config: Record<string, unknown>) => {
-    const { data } = await client.patch(`/config-profiles/${uuid}`, config)
+  updateConfigProfile: async (uuid: string, config: Record<string, unknown>, revision?: string) => {
+    const { data } = await client.patch(`/config-profiles/${uuid}`, config, {
+      headers: revision ? { 'If-Match': revision } : undefined,
+    })
     return data
   },
   createConfigProfile: async (name: string): Promise<ConfigProfile> => {

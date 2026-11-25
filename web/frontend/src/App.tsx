@@ -80,37 +80,37 @@ function ProtectedShell() {
         <Suspense fallback={<div className="flex items-center justify-center h-64 animate-pulse"><div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" /></div>}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/users" element={<Users />} />
-            <Route path="/users/:uuid" element={<UserDetail />} />
-            <Route path="/nodes" element={<Nodes />} />
-            <Route path="/fleet" element={<Fleet />} />
-            <Route path="/hosts" element={<Hosts />} />
-            <Route path="/violations" element={<Violations />} />
-            <Route path="/blocking" element={<Blocking />} />
-            <Route path="/automations" element={<Automations />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route path="/mailserver" element={<MailServer />} />
-            <Route path="/admins" element={<Admins />} />
-            <Route path="/audit" element={<AuditLog />} />
-            <Route path="/admin/plugins" element={<AdminPlugins />} />
-            <Route path="/logs" element={<SystemLogs />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/finance" element={<Finance />} />
-            <Route path="/dns" element={<Dns />} />
-            <Route path="/bscheck" element={<BsCheck />} />
+            <Route path="/users" element={<PermissionRoute resource="users"><Users /></PermissionRoute>} />
+            <Route path="/users/:uuid" element={<PermissionRoute resource="users"><UserDetail /></PermissionRoute>} />
+            <Route path="/nodes" element={<PermissionRoute resource="nodes"><Nodes /></PermissionRoute>} />
+            <Route path="/fleet" element={<PermissionRoute resource="fleet"><Fleet /></PermissionRoute>} />
+            <Route path="/hosts" element={<PermissionRoute resource="hosts"><Hosts /></PermissionRoute>} />
+            <Route path="/violations" element={<PermissionRoute resource="violations"><Violations /></PermissionRoute>} />
+            <Route path="/blocking" element={<PermissionRoute resource="blocked_ips"><Blocking /></PermissionRoute>} />
+            <Route path="/automations" element={<PermissionRoute resource="automation"><Automations /></PermissionRoute>} />
+            <Route path="/notifications" element={<PermissionRoute resource="notifications"><Notifications /></PermissionRoute>} />
+            <Route path="/mailserver" element={<PermissionRoute resource="mailserver"><MailServer /></PermissionRoute>} />
+            <Route path="/admins" element={<PermissionRoute resource="admins"><Admins /></PermissionRoute>} />
+            <Route path="/audit" element={<PermissionRoute resource="audit"><AuditLog /></PermissionRoute>} />
+            <Route path="/admin/plugins" element={<PermissionRoute resource="plugins"><AdminPlugins /></PermissionRoute>} />
+            <Route path="/logs" element={<PermissionRoute resource="logs"><SystemLogs /></PermissionRoute>} />
+            <Route path="/analytics" element={<PermissionRoute resource="analytics"><Analytics /></PermissionRoute>} />
+            <Route path="/finance" element={<PermissionRoute resource="finance"><Finance /></PermissionRoute>} />
+            <Route path="/dns" element={<PermissionRoute resource="dns"><Dns /></PermissionRoute>} />
+            <Route path="/bscheck" element={<PermissionRoute resource="bscheck"><BsCheck /></PermissionRoute>} />
             <Route path="/billing" element={<Navigate to="/finance" replace />} />
-            <Route path="/backups" element={<Backup />} />
-            <Route path="/api-keys" element={<ApiKeys />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/resources" element={<Resources />} />
-            <Route path="/squads" element={<Squads />} />
-            <Route path="/bedolaga" element={<BedolagaDashboard />} />
-            <Route path="/bedolaga/customers" element={<BedolagaCustomers />} />
-            <Route path="/bedolaga/customers/:id" element={<BedolagaCustomerDetail />} />
-            <Route path="/bedolaga/promo" element={<BedolagaPromo />} />
-            <Route path="/bedolaga/marketing" element={<BedolagaMarketing />} />
-            <Route path="/bedolaga/referrals" element={<BedolagaReferrals />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/backups" element={<PermissionRoute resource="backups"><Backup /></PermissionRoute>} />
+            <Route path="/api-keys" element={<PermissionRoute resource="api_keys"><ApiKeys /></PermissionRoute>} />
+            <Route path="/reports" element={<PermissionRoute resource="reports"><Reports /></PermissionRoute>} />
+            <Route path="/resources" element={<ResourcePermissionRoute><Resources /></ResourcePermissionRoute>} />
+            <Route path="/squads" element={<PermissionRoute resource="users"><Squads /></PermissionRoute>} />
+            <Route path="/bedolaga" element={<PermissionRoute resource="bedolaga"><BedolagaDashboard /></PermissionRoute>} />
+            <Route path="/bedolaga/customers" element={<PermissionRoute resource="bedolaga_customers"><BedolagaCustomers /></PermissionRoute>} />
+            <Route path="/bedolaga/customers/:id" element={<PermissionRoute resource="bedolaga_customers"><BedolagaCustomerDetail /></PermissionRoute>} />
+            <Route path="/bedolaga/promo" element={<PermissionRoute resource="bedolaga_promo"><BedolagaPromo /></PermissionRoute>} />
+            <Route path="/bedolaga/marketing" element={<PermissionRoute resource="bedolaga_marketing"><BedolagaMarketing /></PermissionRoute>} />
+            <Route path="/bedolaga/referrals" element={<PermissionRoute resource="bedolaga"><BedolagaReferrals /></PermissionRoute>} />
+            <Route path="/settings" element={<PermissionRoute resource="settings"><Settings /></PermissionRoute>} />
             {pluginRouteEntries.map(({ key, path, Component }) => (
               <Route key={key} path={path} element={<Component />} />
             ))}
@@ -120,6 +120,23 @@ function ProtectedShell() {
       </Layout>
     </ProtectedRoute>
   )
+}
+
+function PermissionRoute({ resource, action = 'view', children }: {
+  resource: string
+  action?: string
+  children: React.ReactNode
+}) {
+  const hasPermission = usePermissionStore((s) => s.hasPermission)
+  return hasPermission(resource, action) ? <>{children}</> : <Navigate to="/" replace />
+}
+
+function ResourcePermissionRoute({ children }: { children: React.ReactNode }) {
+  const hasPermission = usePermissionStore((s) => s.hasPermission)
+  const allowed = hasPermission('config_profiles', 'view')
+    || hasPermission('subscription_templates', 'view')
+    || hasPermission('snippets', 'view')
+  return allowed ? <>{children}</> : <Navigate to="/" replace />
 }
 
 /**
