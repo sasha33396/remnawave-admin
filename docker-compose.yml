@@ -4,7 +4,10 @@ services:
   # ===========================================
 
   bot:
-    image: ghcr.io/case211/remnawave-admin:latest
+    image: ${BOT_IMAGE:-remnawave-admin-bot:3.1.1-rbac}
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     init: true
     env_file:
@@ -92,7 +95,10 @@ services:
   # Агенты остаются на 8081 (collector), админка на WEB_BACKEND_PORT (default 8081 в full, 8082 в api)
 
   web-backend:
-    image: ghcr.io/case211/remnawave-admin-web-backend:latest
+    image: ${WEB_BACKEND_IMAGE:-remnawave-admin-web-backend:3.1.1-rbac}
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
     container_name: remnawave-web-backend
     restart: unless-stopped
     init: true
@@ -139,7 +145,10 @@ services:
   # ===========================================
 
   web-collector:
-    image: ghcr.io/case211/remnawave-admin-web-backend:latest
+    image: ${WEB_BACKEND_IMAGE:-remnawave-admin-web-backend:3.1.1-rbac}
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
     container_name: remnawave-web-collector
     restart: unless-stopped
     init: true
@@ -176,7 +185,10 @@ services:
       start_period: 60s
 
   web-frontend:
-    image: ghcr.io/case211/remnawave-admin-web-frontend:latest
+    image: ${WEB_FRONTEND_IMAGE:-remnawave-admin-web-frontend:3.1.1-rbac}
+    build:
+      context: web/frontend
+      dockerfile: Dockerfile
     container_name: remnawave-web-frontend
     restart: unless-stopped
     init: true
