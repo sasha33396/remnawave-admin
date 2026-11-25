@@ -1480,6 +1480,8 @@
       "alpn": "ALPN",
       "fingerprint": "Fingerprint",
       "inbound": "Inbound",
+      "configProfile": "Config profile",
+      "noInboundAssignment": "No assignment",
       "sniPlaceholder": "Server Name Indication",
       "hostPlaceholder": "Host header",
       "pathPlaceholder": "/path",

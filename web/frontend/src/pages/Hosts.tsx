@@ -49,6 +49,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import client from '../api/client'
+import { resourcesApi } from '../api/resources'
 import { ViewToggle } from '@/components/ViewToggle'
 import { useViewMode } from '@/lib/useViewMode'
 import { HostsTable } from '@/components/hosts/HostsTable'
@@ -63,7 +64,13 @@ interface Host {
   is_disabled: boolean
   is_hidden: boolean
   inbound_uuid: string | null
-  inbound: { uuid: string; tag: string; type: string } | null
+  inbound: {
+    uuid: string
+    tag: string
+    type: string
+    configProfileUuid?: string
+    configProfileInboundUuid?: string
+  } | null
   tag: string | null
   server_description: string | null
   security_layer: string | null
@@ -114,6 +121,92 @@ interface HostEditFormData {
   is_hidden: boolean
 }
 
+interface HostInboundOption {
+  uuid: string
+  tag?: string
+  remark?: string
+  type?: string
+}
+
+const NO_INBOUND_ASSIGNMENT = '__none__'
+
+function HostInboundSelector({
+  profileUuid,
+  inboundUuid,
+  onProfileChange,
+  onInboundChange,
+}: {
+  profileUuid: string
+  inboundUuid: string
+  onProfileChange: (value: string) => void
+  onInboundChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  const { data: configProfiles = [], isLoading: profilesLoading } = useQuery({
+    queryKey: ['config-profiles'],
+    queryFn: resourcesApi.getConfigProfiles,
+  })
+  const { data: profileInbounds = [], isLoading: inboundsLoading } = useQuery<HostInboundOption[]>({
+    queryKey: ['config-profile-inbounds', profileUuid],
+    queryFn: async () => {
+      const { data } = await client.get(`/config-profiles/${profileUuid}/inbounds`)
+      const items = Array.isArray(data) ? data : data?.inbounds || data?.items || []
+      return Array.isArray(items) ? items : []
+    },
+    enabled: !!profileUuid,
+  })
+
+  const selectProfile = (value: string) => {
+    const next = value === NO_INBOUND_ASSIGNMENT ? '' : value
+    onProfileChange(next)
+    onInboundChange('')
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[var(--glass-border)] p-3">
+      <div className="space-y-2">
+        <Label>{t('hosts.form.configProfile')}</Label>
+        <Select
+          value={profileUuid || NO_INBOUND_ASSIGNMENT}
+          onValueChange={selectProfile}
+          disabled={profilesLoading}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_INBOUND_ASSIGNMENT}>{t('hosts.form.noInboundAssignment')}</SelectItem>
+            {configProfiles.map((profile) => (
+              <SelectItem key={profile.uuid} value={profile.uuid}>{profile.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label>{t('hosts.form.inbound')}</Label>
+        <Select
+          value={inboundUuid || NO_INBOUND_ASSIGNMENT}
+          onValueChange={(value) => onInboundChange(value === NO_INBOUND_ASSIGNMENT ? '' : value)}
+          disabled={!profileUuid || inboundsLoading}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_INBOUND_ASSIGNMENT}>{t('hosts.form.noInboundAssignment')}</SelectItem>
+            {profileInbounds.map((inbound) => (
+              <SelectItem key={inbound.uuid} value={inbound.uuid}>
+                {inbound.tag || inbound.remark || inbound.uuid}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
+}
+
 // Suppress unused interface warning — kept for API contract reference
 void (undefined as unknown as HostListResponse)
 
@@ -132,6 +225,11 @@ function HostEditModal({
   error: string
 }) {
   const { t } = useTranslation()
+  const canAssignProfile = useHasPermission('config_profiles', 'view')
+  const [selectedProfileUuid, setSelectedProfileUuid] = useState(host.inbound?.configProfileUuid || '')
+  const [selectedInboundUuid, setSelectedInboundUuid] = useState(
+    host.inbound?.configProfileInboundUuid || host.inbound_uuid || ''
+  )
   const [form, setForm] = useState<HostEditFormData>({
     remark: host.remark || '',
     address: host.address || '',
@@ -168,6 +266,8 @@ function HostEditModal({
       server_description: host.server_description || '',
       is_hidden: host.is_hidden || false,
     })
+    setSelectedProfileUuid(host.inbound?.configProfileUuid || '')
+    setSelectedInboundUuid(host.inbound?.configProfileInboundUuid || host.inbound_uuid || '')
   }, [host])
 
   const handleSubmit = () => {
@@ -190,6 +290,22 @@ function HostEditModal({
     if (form.verify_peer_cert_by_name !== (host.verify_peer_cert_by_name || false)) updateData.verify_peer_cert_by_name = form.verify_peer_cert_by_name
     if (form.server_description !== (host.server_description || '')) updateData.server_description = form.server_description || null
     if (form.is_hidden !== (host.is_hidden || false)) updateData.is_hidden = form.is_hidden
+    const currentProfileUuid = host.inbound?.configProfileUuid || ''
+    const currentInboundUuid = host.inbound?.configProfileInboundUuid || host.inbound_uuid || ''
+    if (
+      canAssignProfile
+      && (
+        selectedProfileUuid !== currentProfileUuid
+        || selectedInboundUuid !== currentInboundUuid
+      )
+    ) {
+      updateData.inbound = selectedProfileUuid && selectedInboundUuid
+        ? {
+            configProfileUuid: selectedProfileUuid,
+            configProfileInboundUuid: selectedInboundUuid,
+          }
+        : null
+    }
 
     if (Object.keys(updateData).length === 0) {
       onClose()
@@ -245,6 +361,15 @@ function HostEditModal({
               />
             </div>
           </div>
+
+          {canAssignProfile && (
+            <HostInboundSelector
+              profileUuid={selectedProfileUuid}
+              inboundUuid={selectedInboundUuid}
+              onProfileChange={setSelectedProfileUuid}
+              onInboundChange={setSelectedInboundUuid}
+            />
+          )}
 
           <div className="space-y-2">
             <Label>{t('hosts.security.label')}</Label>
@@ -435,6 +560,9 @@ function HostCreateModal({
   error: string
 }) {
   const { t } = useTranslation()
+  const canAssignProfile = useHasPermission('config_profiles', 'view')
+  const [selectedProfileUuid, setSelectedProfileUuid] = useState('')
+  const [selectedInboundUuid, setSelectedInboundUuid] = useState('')
   const [form, setForm] = useState<HostEditFormData>({
     remark: '',
     address: '',
@@ -472,6 +600,12 @@ function HostCreateModal({
     if (form.verify_peer_cert_by_name) createData.verify_peer_cert_by_name = true
     if (form.server_description.trim()) createData.server_description = form.server_description.trim()
     if (form.is_hidden) createData.is_hidden = true
+    if (canAssignProfile && selectedProfileUuid && selectedInboundUuid) {
+      createData.inbound = {
+        configProfileUuid: selectedProfileUuid,
+        configProfileInboundUuid: selectedInboundUuid,
+      }
+    }
     onSave(createData)
   }
 
@@ -522,6 +656,15 @@ function HostCreateModal({
               />
             </div>
           </div>
+
+          {canAssignProfile && (
+            <HostInboundSelector
+              profileUuid={selectedProfileUuid}
+              inboundUuid={selectedInboundUuid}
+              onProfileChange={setSelectedProfileUuid}
+              onInboundChange={setSelectedInboundUuid}
+            />
+          )}
 
           <div className="space-y-2">
             <Label>{t('hosts.security.label')}</Label>

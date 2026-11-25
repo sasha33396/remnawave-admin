@@ -22,6 +22,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _require_inbound_assignment_access(
+    admin: AdminUser,
+    inbound: Optional[dict],
+) -> None:
+    """Authorize assigning a host to an inbound without exposing profile secrets."""
+    if inbound is None:
+        # Removing an existing assignment only requires hosts:edit.
+        return
+
+    profile_uuid = inbound.get("configProfileUuid")
+    inbound_uuid = inbound.get("configProfileInboundUuid")
+    if not profile_uuid or not inbound_uuid:
+        raise api_error(
+            400,
+            E.INVALID_INPUT,
+            "Both configProfileUuid and configProfileInboundUuid are required",
+        )
+
+    # Legacy/.env admins and superadmins retain their existing full-access
+    # behavior. RBAC admins must be able to view the referenced profile and it
+    # must be inside their access-policy scope.
+    if admin.role == "superadmin" or admin.account_id is None:
+        return
+    if not admin.has_permission("config_profiles", "view"):
+        raise api_error(403, E.FORBIDDEN, "Config profile access is required")
+    if not await check_access(admin, "config_profile", str(profile_uuid), "view"):
+        raise api_error(403, E.FORBIDDEN, "Config profile is outside your access policy")
+
+
 def _map_host(h: dict) -> dict:
     """Маппинг полей хоста из camelCase API ответа."""
     inbound = h.get('inbound', {})
@@ -163,6 +192,8 @@ async def create_host(
     # A UUID/tag whitelist cannot safely auto-include a new resource.
     if await get_scope(admin, "host", "view") is not None:
         raise api_error(403, E.FORBIDDEN, "Creation is disabled by the attached host access policy")
+    await _require_inbound_assignment_access(admin, data.inbound)
+
     # Формируем payload в формате Remnawave API
     payload = {
         'remark': data.remark,
@@ -344,6 +375,7 @@ async def bulk_update_hosts_ep(
     api_client=Depends(get_api_client),
 ):
     """Массово обновить общие поля хостов (2.8.0: PATCH /hosts/bulk/update)."""
+    await _require_inbound_assignment_access(admin, data.inbound)
     uuids = await _accessible_host_uuids(admin, data.uuids)
     fields: dict = {}
     if data.port is not None:
@@ -378,6 +410,8 @@ async def update_host(
     """Обновить хост."""
     if not await check_access(admin, "host", host_uuid, "edit"):
         raise api_error(403, E.FORBIDDEN)
+    if "inbound" in data.model_fields_set:
+        await _require_inbound_assignment_access(admin, data.inbound)
     payload = {'uuid': host_uuid}
 
     if data.remark is not None:
@@ -388,7 +422,7 @@ async def update_host(
         payload['port'] = data.port
     if data.is_disabled is not None:
         payload['isDisabled'] = data.is_disabled
-    if data.inbound is not None:
+    if "inbound" in data.model_fields_set:
         payload['inbound'] = data.inbound
     if data.sni is not None:
         payload['sni'] = data.sni

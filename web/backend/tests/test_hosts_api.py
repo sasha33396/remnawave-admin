@@ -2,7 +2,9 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from web.backend.api.deps import get_current_admin
+from fastapi import HTTPException
+
+from web.backend.api.deps import get_current_admin, get_api_client
 from .conftest import make_admin
 
 
@@ -135,3 +137,56 @@ class TestListHostsRBAC:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.post("/api/v2/hosts", json={"remark": "test"})
             assert resp.status_code == 403
+
+
+class TestHostInboundAssignment:
+    """Profile/inbound assignment is available without granting secret access."""
+
+    @pytest.mark.asyncio
+    async def test_update_can_remove_inbound_assignment(self, app, client):
+        api = AsyncMock()
+        api.update_host_raw.return_value = {"response": MOCK_HOST_API}
+        app.dependency_overrides[get_api_client] = lambda: api
+
+        with patch("web.backend.api.v2.hosts.check_access", new=AsyncMock(return_value=True)), \
+             patch("web.backend.api.v2.hosts.write_audit_log", new=AsyncMock()):
+            resp = await client.patch("/api/v2/hosts/host-111", json={"inbound": None})
+
+        assert resp.status_code == 200
+        api.update_host_raw.assert_awaited_once()
+        assert api.update_host_raw.await_args.args[0]["inbound"] is None
+
+    @pytest.mark.asyncio
+    async def test_infrastructure_admin_can_assign_visible_profile(self):
+        from web.backend.api.v2.hosts import _require_inbound_assignment_access
+
+        admin = make_admin(
+            "infrastructure_admin",
+            permissions={("hosts", "edit"), ("config_profiles", "view")},
+        )
+        inbound = {
+            "configProfileUuid": "profile-1",
+            "configProfileInboundUuid": "inbound-1",
+        }
+        access = AsyncMock(return_value=True)
+        with patch("web.backend.api.v2.hosts.check_access", new=access):
+            await _require_inbound_assignment_access(admin, inbound)
+
+        access.assert_awaited_once_with(admin, "config_profile", "profile-1", "view")
+
+    @pytest.mark.asyncio
+    async def test_assignment_requires_profile_view_permission(self):
+        from web.backend.api.v2.hosts import _require_inbound_assignment_access
+
+        admin = make_admin(
+            "limited",
+            permissions={("hosts", "edit")},
+        )
+        inbound = {
+            "configProfileUuid": "profile-1",
+            "configProfileInboundUuid": "inbound-1",
+        }
+        with pytest.raises(HTTPException) as exc:
+            await _require_inbound_assignment_access(admin, inbound)
+
+        assert exc.value.status_code == 403
