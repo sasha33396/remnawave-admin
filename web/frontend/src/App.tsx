@@ -103,7 +103,7 @@ function ProtectedShell() {
             <Route path="/api-keys" element={<PermissionRoute resource="api_keys"><ApiKeys /></PermissionRoute>} />
             <Route path="/reports" element={<PermissionRoute resource="reports"><Reports /></PermissionRoute>} />
             <Route path="/resources" element={<ResourcePermissionRoute><Resources /></ResourcePermissionRoute>} />
-            <Route path="/squads" element={<PermissionRoute resource="users"><Squads /></PermissionRoute>} />
+            <Route path="/squads" element={<PermissionRoute resource="squads"><Squads /></PermissionRoute>} />
             <Route path="/bedolaga" element={<PermissionRoute resource="bedolaga"><BedolagaDashboard /></PermissionRoute>} />
             <Route path="/bedolaga/customers" element={<PermissionRoute resource="bedolaga_customers"><BedolagaCustomers /></PermissionRoute>} />
             <Route path="/bedolaga/customers/:id" element={<PermissionRoute resource="bedolaga_customers"><BedolagaCustomerDetail /></PermissionRoute>} />

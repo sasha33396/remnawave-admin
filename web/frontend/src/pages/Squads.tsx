@@ -26,9 +26,10 @@ function InternalSquadsTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const hasPermission = usePermissionStore((s) => s.hasPermission)
-  const canCreate = hasPermission('users', 'create')
-  const canEdit = hasPermission('users', 'edit')
-  const canDelete = hasPermission('users', 'delete')
+  const canCreate = hasPermission('squads', 'create')
+  const canEdit = hasPermission('squads', 'edit')
+  const canEditInbounds = hasPermission('squads', 'inbounds_edit')
+  const canDelete = hasPermission('squads', 'delete')
 
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -46,6 +47,7 @@ function InternalSquadsTab() {
   const { data: allInbounds = [] } = useQuery({
     queryKey: ['squads-inbounds'],
     queryFn: squadsApi.listInbounds,
+    enabled: canCreate || canEditInbounds,
   })
 
   const invalidate = () => {
@@ -66,7 +68,10 @@ function InternalSquadsTab() {
   })
 
   const updateMut = useMutation({
-    mutationFn: () => squadsApi.updateInternal(editSquad!.uuid, { name: editName.trim(), inbounds: editInbounds }),
+    mutationFn: () => squadsApi.updateInternal(editSquad!.uuid, {
+      ...(canEdit ? { name: editName.trim() } : {}),
+      ...(canEditInbounds ? { inbounds: editInbounds } : {}),
+    }),
     onSuccess: () => {
       invalidate()
       setEditSquad(null)
@@ -88,7 +93,8 @@ function InternalSquadsTab() {
   const openEdit = (sq: InternalSquad) => {
     setEditSquad(sq)
     setEditName(sq.name)
-    setEditInbounds(sq.inbounds?.map((ib) => ib.uuid) || [])
+    const visibleIds = new Set(allInbounds.map((ib) => ib.uuid))
+    setEditInbounds(sq.inbounds?.map((ib) => ib.uuid).filter((uuid) => visibleIds.has(uuid)) || [])
   }
 
   const toggleInbound = (uuid: string, list: string[], setList: (v: string[]) => void) => {
@@ -118,7 +124,7 @@ function InternalSquadsTab() {
           {squads.map((sq) => {
             const scopeAllowsEdit = sq.allowed_actions == null || sq.allowed_actions.includes('edit')
             const scopeAllowsDelete = sq.allowed_actions == null || sq.allowed_actions.includes('delete')
-            const effectiveCanEdit = canEdit && scopeAllowsEdit
+            const effectiveCanEdit = (canEdit || canEditInbounds) && scopeAllowsEdit
             const effectiveCanDelete = canDelete && scopeAllowsDelete
             return (
             <Card key={sq.uuid} className="animate-fade-in-up">
@@ -195,7 +201,7 @@ function InternalSquadsTab() {
               onChange={(e) => setNewName(e.target.value)}
               maxLength={30}
             />
-            {allInbounds.length > 0 && (
+            {canEditInbounds && allInbounds.length > 0 && (
               <div>
                 <Label className="text-sm text-muted-foreground mb-2 block">
                   Inbounds
@@ -242,8 +248,9 @@ function InternalSquadsTab() {
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               maxLength={30}
+              disabled={!canEdit}
             />
-            {allInbounds.length > 0 && (
+            {canEditInbounds && allInbounds.length > 0 && (
               <div>
                 <Label className="text-sm text-muted-foreground mb-2 block">
                   Inbounds
@@ -257,6 +264,7 @@ function InternalSquadsTab() {
                       <Checkbox
                         checked={editInbounds.includes(ib.uuid)}
                         onCheckedChange={() => toggleInbound(ib.uuid, editInbounds, setEditInbounds)}
+                        disabled={!canEditInbounds}
                       />
                       <span className="text-sm text-white">{ib.tag}</span>
                       <span className="text-[10px] text-muted-foreground ml-auto">{ib.type}</span>
@@ -270,7 +278,7 @@ function InternalSquadsTab() {
             <Button variant="outline" onClick={() => setEditSquad(null)}>{t('common.cancel')}</Button>
             <Button
               onClick={() => updateMut.mutate()}
-              disabled={!editName.trim() || updateMut.isPending}
+              disabled={(canEdit && !editName.trim()) || updateMut.isPending}
             >
               {t('common.save', { defaultValue: 'Save' })}
             </Button>
@@ -295,9 +303,9 @@ function ExternalSquadsTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const hasPermission = usePermissionStore((s) => s.hasPermission)
-  const canCreate = hasPermission('users', 'create')
-  const canEdit = hasPermission('users', 'edit')
-  const canDelete = hasPermission('users', 'delete')
+  const canCreate = hasPermission('squads', 'create')
+  const canEdit = hasPermission('squads', 'edit')
+  const canDelete = hasPermission('squads', 'delete')
 
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -489,7 +497,7 @@ export default function Squads() {
   const hasPermission = usePermissionStore((s) => s.hasPermission)
   const [tab, setTab] = useTabParam('internal', [...VALID_TABS])
 
-  if (!hasPermission('users', 'view')) {
+  if (!hasPermission('squads', 'view')) {
     return (
       <div className="p-4 md:p-6 flex items-center justify-center min-h-[400px]">
         <p className="text-muted-foreground">{t('common.noPermission', { defaultValue: 'No permission' })}</p>

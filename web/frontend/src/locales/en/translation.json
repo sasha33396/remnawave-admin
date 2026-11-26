@@ -1990,6 +1990,7 @@
       "view": "View",
       "edit": "Edit",
       "bulk_operations": "Bulk operations",
+      "inbounds_edit": "Manage inbounds",
       "run": "Run"
     },
     "resources": {
@@ -2001,7 +2002,8 @@
       "settings": "Settings",
       "violation": "Violation",
       "automation": "Automation",
-      "system": "System"
+      "system": "System",
+      "squads": "Squads"
     },
     "errors": {
       "noChanges": "No changes to save.",

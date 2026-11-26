@@ -34,6 +34,7 @@ router = APIRouter()
 # runtime via the plugin loader — see ``get_resources_map()`` below.
 AVAILABLE_RESOURCES = {
     "users": ["view", "create", "edit", "delete", "bulk_operations"],
+    "squads": ["view", "create", "edit", "delete", "inbounds_edit"],
     "nodes": [
         "view", "create", "edit", "delete", "restart", "enable", "disable",
         "secrets_view", "secrets_edit",

@@ -96,7 +96,7 @@ const navigation: NavigationEntry[] = [
   // People — «управляю людьми»
   { type: 'section', name: 'nav.sections.people' },
   { name: 'nav.users', href: '/users', icon: Users, permission: { resource: 'users', action: 'view' } },
-  { name: 'nav.squads', href: '/squads', icon: UsersRound, permission: { resource: 'users', action: 'view' } },
+  { name: 'nav.squads', href: '/squads', icon: UsersRound, permission: { resource: 'squads', action: 'view' } },
   // Infrastructure — «управляю железом и конфигурацией»
   { type: 'section', name: 'nav.sections.infrastructure' },
   { name: 'nav.nodes', href: '/nodes', icon: Server, permission: { resource: 'nodes', action: 'view' } },
